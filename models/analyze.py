@@ -46,7 +46,10 @@ def init(start_month, end_month):
     focus = pd.read_csv(PATH_TO_SAVE + FOLD_TRIG + "/" + 'trig_' + start_month + '_' + end_month + '.csv')
     offset = pd.read_csv(PATH_TO_SAVE + FOLD_TRIG + "/" + 'offset_' + start_month + '_' + end_month + '.csv')
 
-    mad = stats.median_abs_deviation(fermi[nn.columns] - nn, axis=0, scale="normal", nan_policy="omit")
+    df_fermi_num = fermi[nn.columns].select_dtypes(include=['number'])
+    df_nn_num = nn.select_dtypes(include=['number'])
+    
+    mad = stats.median_abs_deviation(df_fermi_num - df_nn_num, axis=0, scale="normal", nan_policy="omit")
     sigma_residual = dict(zip(nn.columns, mad))
 
     trigger_catalog = crop_catalog(fermi.met.values[0], fermi.met.values[-1])
@@ -239,17 +242,18 @@ def statistics_table(trig_table):
         # Loop for energy range
         for rng in ['r0', 'r1', 'r2']:
             # Percentage of events that range rng triggered
-            dct_perc[rng]['perc_det'+'_'+event_stat] = np.round(
-                sum([1. for i in trig_table_tmp.loc[:, 'trig_dets'] if '_' + rng in str(i)]) / n, 3)
+            dct_perc[rng]['perc_det'+'_'+event_stat] = np.round((sum([1. for i in trig_table_tmp.loc[:, 'trig_dets'] if '_' + rng in str(i)]) / n) if n > 0 else 0.0, 3)
+            
             for det in ['n0', 'n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n7', 'n8', 'n9', 'na', 'nb']:
                 # Percentage of events that detector det was triggered
                 dct_perc['perc_rng'][det+'_'+event_stat] = np.round(
-                    sum([1. for i in trig_table_tmp.loc[:, 'trig_dets'] if det + '_' in str(i)]) / n, 3)
+                    (sum([1. for i in trig_table_tmp.loc[:, 'trig_dets'] if det + '_' in str(i)]) / n) if n > 0 else 0.0, 3)
+                
                 # Percentage of events that detector det and range rng were triggered
-                dct_perc[rng][det+'_'+event_stat] = np.round(
-                    sum([1. for i in trig_table_tmp.loc[:, 'trig_dets'] if det+'_'+rng in str(i)]) / n, 3)
-    dtf_out = pd.DataFrame(dct_perc)
-    return dtf_out
+                dct_perc[rng][det+'_'+event_stat] = np.round((sum([1. for i in trig_table_tmp.loc[:, 'trig_dets'] if det+'_'+rng in str(i)]) / n) if n > 0 else 0.0, 3)
+                
+        dtf_out = pd.DataFrame(dct_perc)
+        return dtf_out
 
 
 def reduce_table(events_table, events, t_filt=300, bln_gbm=True):
@@ -280,10 +284,10 @@ def reduce_table(events_table, events, t_filt=300, bln_gbm=True):
                     ))
                 else:
                     # Add trigger as event
-                    events_table_red = events_table_red.append(events_table.loc[i - 1], ignore_index=True)
+                    events_table_red = pd.concat([events_table_red, pd.DataFrame([events_table.loc[i - 1]])], ignore_index=True)
             else:
                 # Add trigger as event
-                events_table_red = events_table_red.append(events_table.loc[i - 1], ignore_index=True)
+                events_table_red = pd.concat([events_table_red, pd.DataFrame([events_table.loc[i - 1]])], ignore_index=True)
         # If the next trigger is greater then t_filt join only if GBM catalg says it's belonging to the same event
         else:
             if events_table.loc[i-1, 'catalog_triggers'] != '' and bln_gbm:
@@ -292,7 +296,7 @@ def reduce_table(events_table, events, t_filt=300, bln_gbm=True):
                     pass
                 else:
                     # The name of the GBM trigger catalog don't coincide, add trigger as event and go to the next one
-                    events_table_red = events_table_red.append(events_table.loc[i - 1], ignore_index=True)
+                    events_table_red = pd.concat([events_table_red, pd.DataFrame([events_table.loc[i - 1]])], ignore_index=True)
                     continue
             # Update in the current trigger event the previous start times and join the detectors triggered
             events_table.loc[i, 'start_met'] = events_table.loc[i - 1, 'start_met']
@@ -308,7 +312,7 @@ def reduce_table(events_table, events, t_filt=300, bln_gbm=True):
                 events_table.iloc[i].catalog_triggers = ''.join([events_table.iloc[i].catalog_triggers,
                                                                  events_table.iloc[i-1].catalog_triggers])
     # Add the remaining trigger as event
-    events_table_red = events_table_red.append(events_table.iloc[events_table.shape[0] - 1], ignore_index=True)
+    events_table_red = pd.concat([events_table_red, pd.DataFrame([events_table.iloc[events_table.shape[0] - 1]])], ignore_index=True)
     events_table_red = events_table_red.reset_index()
     events_table_red = events_table_red.rename(columns={'index': 'event_ids'})
 

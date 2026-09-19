@@ -8,6 +8,8 @@ if user == 'rcrupi':
     PATH_TO_SAVE = "/beegfs/rcrupi/"
 elif  user == 'riccardo':
     PATH_TO_SAVE = "C:/Users/riccardo/Documents/GBM_data/"
+elif  user == 'vanni':
+    PATH_TO_SAVE = "/Users/vanni/Desktop/tesi/DeepGRB/data/"
 else:
     # PATH_TO_SAVE = "C:/Users/peppe/Dropbox/Progetti/NN_FOCuS/DeepGRB-master/data/"
     PATH_TO_SAVE = "D:/Dropbox/Progetti/NN_FOCuS/DeepGRB/data/"
@@ -25,6 +27,8 @@ if user == 'rcrupi':
     FOLD_RES = PATH_TO_SAVE + 'results/'
 elif user == 'riccardo':
     FOLD_RES = "C:/Users/riccardo/Documents/GBM_data/" + '/results/'
+elif  user == 'vanni':
+    FOLD_RES = PATH_TO_SAVE + 'results/'
 else:
     FOLD_RES = Path(db_path).parent.parent / 'results/'
 GBM_BURST_DB = Path(db_path).parent.parent / 'data/gbm_burst_catalog.db'

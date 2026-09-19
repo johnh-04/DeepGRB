@@ -24,6 +24,7 @@ def build_table(df_days, erange, bool_overwrite=False, bool_parallel=False, n_jo
     :return:
     """
     logging.info("Begin build table (csv files).")
+    os.makedirs(PATH_TO_SAVE + FOLD_BKG, exist_ok=True)
     for _, row in df_days.iterrows():
         try:
             # Sort list file to have cspec + poshist in FOLD_CSPEC_POS

@@ -1,5 +1,5 @@
 # import utils
-from connections.utils.config import PATH_TO_SAVE, FOLD_PRED, GBM_BURST_DB
+from connections.utils.config import GBM_TRIG_DB, PATH_TO_SAVE, FOLD_PRED, GBM_BURST_DB
 import logging
 # Standard packages
 import pandas as pd
@@ -24,8 +24,8 @@ def add_trig_gbm_to_frg(start_month, end_month, inter_time=4.096):
     # Take index of the time where triggers were identified
     # TODO update this table
     # update_gbm_db()
-    engine = create_engine('sqlite:////' + GBM_BURST_DB + 'gbm_burst_catalog.db')
-    gbm_tri = pd.read_sql_table('GBM_TRI', con=engine)
+    from connections.utils.config import GBM_TRIG_DB
+    gbm_tri = pd.read_csv(GBM_TRIG_DB)
     # select only events in frg timeline
     gbm_tri = gbm_tri.loc[(gbm_tri['met_end_time'] >= df_data['met'].min()) &
                           (gbm_tri['met_time'] <= df_data['met'].max()), :]

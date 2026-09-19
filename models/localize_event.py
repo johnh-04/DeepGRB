@@ -116,24 +116,18 @@ def localize(start_month, end_month, pre_delay=8, bln_only_trig_det=False, bln_f
             #     index_end_peak = index_not_event[index_not_event >= ind_max][0]
             # df_frg_bkg_event = df_frg_bkg_event.loc[index_start_peak:index_end_peak, :].dropna(axis=0)
 
-            # Initialise inputs for localization
-            list_ra = pd.DataFrame()
-            list_dec = pd.DataFrame()
-            counts_frg = pd.DataFrame()
-            counts_bkg = pd.DataFrame()
             # Choose only triggered detectors or all detectors for localization
             if bln_only_trig_det:
                 col_filter = [i for i in range(0, 12) if col_det[i] in trig_dets]
             else:
                 col_filter = range(0, 12)
             # Define list ra and dec and their relative counts in ind_max. TODO update index start/end
-            list_ra = list_ra.append(
-              df_frg_bkg.loc[ind_max, np.array(col_ra)[col_filter]] / 180 * np.pi)
-            list_dec = list_dec.append(df_frg_bkg.loc[ind_max, np.array(col_dec)[col_filter]] / 180 * np.pi)
-            counts_frg = counts_frg.append(df_frg_bkg.loc[ind_max, np.array(col_count_frg)[col_filter]])
-            counts_bkg = counts_bkg.append(df_frg_bkg.loc[ind_max, np.array(col_count_bkg)[col_filter]])
+            ra_vals = (df_frg_bkg.loc[ind_max, np.array(col_ra)[col_filter]] / 180 * np.pi).values
+            dec_vals = (df_frg_bkg.loc[ind_max, np.array(col_dec)[col_filter]] / 180 * np.pi).values
+            cnt_frg_vals = df_frg_bkg.loc[ind_max, np.array(col_count_frg)[col_filter]].values
+            cnt_bkg_vals = df_frg_bkg.loc[ind_max, np.array(col_count_bkg)[col_filter]].values
             # Run localization algorithm
-            loc = localization(list_ra.values, list_dec.values, counts_frg.values, counts_bkg.values)
+            loc = localization(ra_vals, dec_vals, cnt_frg_vals, cnt_bkg_vals)
             res = loc.fit()
             print(res)
             _ = loc.fit_conf_int(n_sample_montecarlo)

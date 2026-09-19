@@ -7,7 +7,7 @@ from gbm.finder import ContinuousFtp
 import pandas as pd
 import datetime, calendar
 from dateutil.relativedelta import relativedelta
-from connections.utils.config import PATH_TO_SAVE, FOLD_CSPEC_POS
+from connections.utils.config import FOLD_POSHIST, PATH_TO_SAVE, FOLD_CSPEC_POS
 
 
 def download_spec(start_month, end_month, bool_overwrite=False):
@@ -37,22 +37,24 @@ def download_spec(start_month, end_month, bool_overwrite=False):
         tStart = [datetime.datetime(year, month, day, 12).strftime('%Y-%m-%dT%H:%M:%S.00') for day in
                   range(1, num_days + 1)]
         # Dataframe with the list of days
-        df_days = df_days.append(pd.DataFrame({'id': days, 'tStart': tStart}), ignore_index=True)
+        df_days = pd.concat([df_days, pd.DataFrame({'id': days, 'tStart': tStart})], ignore_index=True)
         date_tmp = date_tmp + relativedelta(months=1)
     logging.info('End list days bkg.')
+
+    # df_days = df_days.head(7) # TAGLIO ALLA PRIMA SETTIMANA
+
+    os.makedirs(PATH_TO_SAVE + FOLD_CSPEC_POS, exist_ok=True)
+    os.makedirs(PATH_TO_SAVE + FOLD_POSHIST, exist_ok=True)
 
     # Run 4 times the download to be sure that a day is downloaded. Can happen that a download fails.
     for round in [0, 1, 2, 3]:
         logging.info('round #: {}'.format(round))
         # List files, e.g. name: glg_cspec_nb_210929_v00.pha
         # split for '_' and take third position -> 210929
-        list_days = [i.split('_')[3] for i in os.listdir(PATH_TO_SAVE + FOLD_CSPEC_POS)]
-        # per each day count the number of files
-        df_days_count = pd.Series(list_days).value_counts().reset_index()
-        df_days_count = df_days_count.rename(columns={'index': 'id', 0: 'num_files'})
-        # Select only the days to download
-        df_days_count = pd.merge(df_days, df_days_count, how='left', on='id')
-        df_days_count = df_days_count.fillna(0)
+        list_days = [i.split('_')[3] for i in os.listdir(PATH_TO_SAVE + FOLD_CSPEC_POS) if len(i.split('_')) > 3]
+        # Conta i file in modo nativo e sicuro
+        df_days_count = df_days.copy()
+        df_days_count['num_files'] = df_days_count['id'].apply(lambda x: list_days.count(x))
         # Cycle for each Burst day
         for _, row in df_days_count.iterrows():
             try:
