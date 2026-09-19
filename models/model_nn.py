@@ -99,11 +99,10 @@ class ModelNN:
                 df_tmp = pd.read_csv(PATH_TO_SAVE + FOLD_BKG + '/' + csv_tmp)
                 # import datetime
                 # df_tmp['day'] = datetime.datetime(int('20'+csv_tmp[0:2]), int(csv_tmp[2:4]), int(csv_tmp[4:6])).timetuple().tm_yday
-                df_data = df_data.append(df_tmp, ignore_index=True)
+                df_data = pd.concat([df_data, df_tmp], ignore_index=True)
             except Exception as e:
                 logging.warning(e)
                 logging.warning("Can't load day: " + str(csv_tmp))
-        del df_tmp
 
         # Filter data within saa
         logging.info("Filtering data when Fermi is in SAA.")
@@ -156,7 +155,7 @@ class ModelNN:
         opt = tf.keras.optimizers.Nadam(learning_rate=lr, beta_1=beta_1, beta_2=beta_2, epsilon=1e-07)
         loss = 'mae'
         # Compile nn model
-        nn_r.compile(loss=loss, loss_weights=1, optimizer=opt)
+        nn_r.compile(loss=loss, loss_weights=1.0, optimizer=opt)
         return nn_r
 
     def train(self, bool_train=True, bool_hyper=False, loss_type='mean', units=4000, epochs=512, lr=0.001, bs=2000,
@@ -256,7 +255,7 @@ class ModelNN:
                     logging.warning("Can't import model " + model_pretrain + ". Train a NN from scratch.")
 
             # Compile nn model
-            nn_r.compile(loss=loss, loss_weights=1, optimizer=opt)
+            nn_r.compile(loss=loss, loss_weights=1.0, optimizer=opt)
 
             def scheduler(epoch, lr_actual):
                 if epoch < 4:
@@ -272,7 +271,7 @@ class ModelNN:
                 # Fitting the model
                 if modelcheck:
                     es = EarlyStopping(monitor='val_loss', mode='min', min_delta=0.01, patience=32)
-                    mc = ModelCheckpoint(db_path + '/m_check/saved_model.ckpt', monitor='val_loss', mode='min',
+                    mc = ModelCheckpoint(db_path + '/m_check/saved_model.keras', monitor='val_loss', mode='min',
                                          verbose=0, save_best_only=True)
                 else:
                     es = EarlyStopping(monitor='val_loss', mode='min', min_delta=0.01, patience=32,
@@ -283,7 +282,7 @@ class ModelNN:
                 if modelcheck:
                     history = nn_r.fit(X_train, y_train, epochs=epochs, batch_size=bs,
                                        validation_split=0.3, callbacks=[es, mc, call_lr])
-                    nn_r = load_model(db_path + '/m_check/saved_model.ckpt')
+                    nn_r = load_model(db_path + '/m_check/saved_model.keras')
                 else:
                     history = nn_r.fit(X_train, y_train, epochs=epochs, batch_size=bs,
                                        validation_split=0.3, callbacks=[es, call_lr])
@@ -375,7 +374,7 @@ class ModelNN:
                     logging.error("Model not found. Try to train the model.")
                     raise
                 # Sort to take the best 'loss' model
-                index_min_loss = int(np.argmin([float(i.split('_')[-1].split('.h5')[0]) for i in onlyfiles]))
+                index_min_loss = int(np.argmin([float(i.split('_')[-2]) for i in onlyfiles]))
                 logging.info("Try to load " + onlyfiles[index_min_loss])
                 self.nn_r = load_model(PATH_TO_SAVE + FOLD_NN + '/' + onlyfiles[index_min_loss], compile=False)
                 pass
@@ -418,8 +417,8 @@ class ModelNN:
                 set_index = set_index.union(set(range(max(ind - time_to_del, min_index),
                                                       min(ind + time_to_del, max_index))))
             # Set counts in SSA as NaN. The algorithm of triggering will ignore those
-            df_ori.loc[set_index, self.col_range] = np.nan
-            y_pred.loc[set_index] = np.nan
+            df_ori.loc[list(set_index), self.col_range] = np.nan
+            y_pred.loc[list(set_index)] = np.nan
 
         # Set zero counts (in frg) to np.nan
         for col in self.col_range:
@@ -435,9 +434,11 @@ class ModelNN:
 
         # Save the data
         logging.info("Save foreground and background in csv files.")
-        df_ori.to_csv(PATH_TO_SAVE + FOLD_PRED + "/" + 'frg_' + self.start_month + '_' + self.end_month + '.csv',
+        output_dir = PATH_TO_SAVE + FOLD_PRED
+        os.makedirs(output_dir, exist_ok=True)
+        df_ori.to_csv(output_dir + "/" + 'frg_' + self.start_month + '_' + self.end_month + '.csv',
                       index=False)
-        y_pred.to_csv(PATH_TO_SAVE + FOLD_PRED + "/" + 'bkg_' + self.start_month + '_' + self.end_month + '.csv',
+        y_pred.to_csv(output_dir + "/" + 'bkg_' + self.start_month + '_' + self.end_month + '.csv',
                       index=False)
 
     def plot(self, time_r=range(0, 10000), time_iso=None, orbit_bin=None, det_rng='n1_r1'):
@@ -472,9 +473,9 @@ class ModelNN:
             # df_ori = df_ori.dropna(axis=0)
             # y_pred = y_pred.dropna(axis=0)
             # Downsample the signals averaging by orbit_bin orbit slots. 96.5*60s are the seconds of orbit.
-            df_ori_downsample = df_ori.groupby(df_ori.met // (96*orbit_bin*60)).mean()
+            df_ori_downsample = df_ori.groupby(df_ori.met // (96*orbit_bin*60)).mean(numeric_only=True)
             df_ori_downsample['timestamp'] = df_ori['timestamp'].groupby(df_ori.met // (96*orbit_bin*60)).first()
-            y_pred_downsample = y_pred.groupby(df_ori.met // (96*orbit_bin*60)).mean()
+            y_pred_downsample = y_pred.groupby(df_ori.met // (96*orbit_bin*60)).mean(numeric_only=True)
             y_pred_downsample['timestamp'] = df_ori_downsample['timestamp']
 
             # df_ori_downsample = df_ori.groupby(df_ori.index//1000).sum()

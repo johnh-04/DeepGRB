@@ -5,6 +5,7 @@ from utils.keys import get_keys
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import os
 
 
 def run_trigger(start_month, end_month, trigger):
@@ -44,11 +45,13 @@ def run_trigger(start_month, end_month, trigger):
         dct_offset[key] = out_offset
     focus_res = pd.DataFrame(dct_res)
     focus_offset = pd.DataFrame(dct_offset)
+    trig_dir = PATH_TO_SAVE + FOLD_TRIG
+    os.makedirs(trig_dir, exist_ok=True)
     # TODO: [GD] csv name should report trigger parameters
     # Save data to csv
-    focus_res.to_csv(PATH_TO_SAVE + FOLD_TRIG + '/trig_' + start_month + '_' + end_month + '.csv',
+    focus_res.to_csv(trig_dir + '/trig_' + start_month + '_' + end_month + '.csv',
                      index=False, float_format='%.2f')
-    focus_offset.to_csv(PATH_TO_SAVE + FOLD_TRIG + '/offset_' + start_month + '_' + end_month + '.csv',
+    focus_offset.to_csv(trig_dir + '/offset_' + start_month + '_' + end_month + '.csv',
                      index=False, float_format='%.2f')
     print("Done.")
     return focus_res
