@@ -8,8 +8,10 @@ if user == 'rcrupi':
     PATH_TO_SAVE = "/beegfs/rcrupi/"
 elif  user == 'riccardo':
     PATH_TO_SAVE = "C:/Users/riccardo/Documents/GBM_data/"
-elif  user == 'vanni':
+elif user == 'vanni':
     PATH_TO_SAVE = "/Users/vanni/Desktop/tesi/DeepGRB/data/"
+elif user == 'gpm04':
+    PATH_TO_SAVE = "/lustrehome/gpm04/DeepGRB/data/"
 else:
     # PATH_TO_SAVE = "C:/Users/peppe/Dropbox/Progetti/NN_FOCuS/DeepGRB-master/data/"
     PATH_TO_SAVE = "D:/Dropbox/Progetti/NN_FOCuS/DeepGRB/data/"
@@ -27,7 +29,9 @@ if user == 'rcrupi':
     FOLD_RES = PATH_TO_SAVE + 'results/'
 elif user == 'riccardo':
     FOLD_RES = "C:/Users/riccardo/Documents/GBM_data/" + '/results/'
-elif  user == 'vanni':
+elif user == 'vanni':
+    FOLD_RES = PATH_TO_SAVE + 'results/'
+elif user == 'gpm04':
     FOLD_RES = PATH_TO_SAVE + 'results/'
 else:
     FOLD_RES = Path(db_path).parent.parent / 'results/'
