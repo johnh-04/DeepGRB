@@ -153,10 +153,10 @@ cython_debug/
 
 # PyCharm
 .idea/
-/data/bkg/
-/data/pred/
-/data/trig/
-/results/
+# /data/bkg/
+# /data/pred/
+# /data/trig/
+# /results/
 
-data/cspec/
-data/*.pha
+# data/cspec/
+# data/*.pha
