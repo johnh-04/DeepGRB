@@ -45,7 +45,7 @@ else:
 # 3 Train NN
 nn = ModelNN(start_month, end_month)
 nn.prepare(bool_del_trig=True)
-nn.train(bool_train=False, bool_hyper=False, loss_type='mean', units=2048, epochs=64, lr=0.0008, bs=2048, do=0.02, modelcheck=True)
+nn.train(bool_train=True, bool_hyper=False, loss_type='mean', units=2048, epochs=64, lr=0.0008, bs=2048, do=0.02, modelcheck=True)  # bool_train=False to use a model that already exists
 nn.predict(time_to_del=150)  # set to 150 by default
 
 # Plot folders
