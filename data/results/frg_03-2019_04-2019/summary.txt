@@ -1,5 +1,0 @@
-found 0 trigger segments.
-from which 0 events were resolved.
-detected 0 events in GBM trig catalog;
-undetected: 0;
-missing: 5

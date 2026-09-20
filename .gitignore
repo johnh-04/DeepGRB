@@ -146,17 +146,16 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-# Datafiles
-./data/plots
-./data/pred
-./data/trig
-
 # PyCharm
 .idea/
-# /data/bkg/
-# /data/pred/
-# /data/trig/
-# /results/
 
-# data/cspec/
-# data/*.pha
+# Datafiles
+data/bkg/
+data/pred
+data/trig/
+data/cspec/
+data/*.pha
+data/nn_model/
+data/plots/
+data/poshist/
+data/results/
