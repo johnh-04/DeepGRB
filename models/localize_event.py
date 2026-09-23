@@ -122,37 +122,65 @@ def localize(start_month, end_month, pre_delay=8, bln_only_trig_det=False, bln_f
             else:
                 col_filter = range(0, 12)
             # Define list ra and dec and their relative counts in ind_max. TODO update index start/end
-            ra_vals = (df_frg_bkg.loc[ind_max, np.array(col_ra)[col_filter]] / 180 * np.pi).values
-            dec_vals = (df_frg_bkg.loc[ind_max, np.array(col_dec)[col_filter]] / 180 * np.pi).values
-            cnt_frg_vals = df_frg_bkg.loc[ind_max, np.array(col_count_frg)[col_filter]].values
-            cnt_bkg_vals = df_frg_bkg.loc[ind_max, np.array(col_count_bkg)[col_filter]].values
-            # Run localization algorithm
+            ra_vals = np.atleast_2d(
+                np.asarray(df_frg_bkg.loc[ind_max, np.array(col_ra)[col_filter]], dtype=np.float64) / 180.0 * np.pi
+            )
+            dec_vals = np.atleast_2d(
+                np.asarray(df_frg_bkg.loc[ind_max, np.array(col_dec)[col_filter]], dtype=np.float64) / 180.0 * np.pi
+            )
+            cnt_frg_vals = np.atleast_2d(
+                np.asarray(df_frg_bkg.loc[ind_max, np.array(col_count_frg)[col_filter]], dtype=np.float64)
+            )
+            cnt_bkg_vals = np.atleast_2d(
+                np.asarray(df_frg_bkg.loc[ind_max, np.array(col_count_bkg)[col_filter]], dtype=np.float64)
+            )
+
             loc = localization(ra_vals, dec_vals, cnt_frg_vals, cnt_bkg_vals)
             res = loc.fit()
             print(res)
             _ = loc.fit_conf_int(n_sample_montecarlo)
-            mean, cov = loc.plot()
+
+            # Defensive unpacking for loc.plot()
+            plot_out = loc.plot()
+            if isinstance(plot_out, tuple) and len(plot_out) == 2:
+                mean, cov = plot_out
+            elif hasattr(plot_out, '__iter__') and not isinstance(plot_out, (str, bytes)):
+                plot_items = list(plot_out)
+                mean = plot_items[0] if len(plot_items) > 0 else plot_out
+                cov = plot_items[1] if len(plot_items) > 1 else None
+            else:
+                mean, cov = plot_out, None
+
             # Download and load poshist files
             if bln_folder:
-                cont_finder = ContinuousFtp(met=int(met_event))
+                # Ensure met_event is cast to a standard native int
+                met_val = int(round(float(met_event)))
+                cont_finder = ContinuousFtp(met=met_val)
                 poshist_name = cont_finder.ls_poshist()[0]
-                if poshist_name not in os.listdir(PATH_TO_SAVE + FOLD_POSHIST):
+                
+                poshist_dir = os.path.join(PATH_TO_SAVE, FOLD_POSHIST)
+                os.makedirs(poshist_dir, exist_ok=True)
+                
+                if poshist_name not in os.listdir(poshist_dir):
                     try:
-                        cont_finder = ContinuousFtp(met=int(met_event))
-                        cont_finder.get_poshist(PATH_TO_SAVE + FOLD_POSHIST)
-                    except:
-                        print('Error in downloading poshist', row['trigs_id'])
+                        cont_finder = ContinuousFtp(met=met_val)
+                        cont_finder.get_poshist(poshist_dir)
+                    except Exception as err:
+                        print(f"Error in downloading poshist for trigger {row.get('trigs_id', 'unknown')}: {err}")
                         continue
                 # Open a poshist file
-                poshist = PosHist.open(PATH_TO_SAVE + FOLD_POSHIST + "/" + poshist_name)
+                poshist = PosHist.open(os.path.join(poshist_dir, poshist_name))
             else:
-                # initialize the continuous data finder with a time (Fermi MET, UTC, or GPS)
-                cont_finder = ContinuousFtp(met=met_event)
+                met_val = int(round(float(met_event)))
+                cont_finder = ContinuousFtp(met=met_val)
                 poshist_name = cont_finder.ls_poshist()[0]
-                cont_finder.get_poshist('./tmp_pos')
-                # open a poshist file
-                poshist = PosHist.open('./tmp_pos/' + poshist_name)
-                os.remove('./tmp_pos/' + poshist_name)
+                tmp_dir = './tmp_pos'
+                os.makedirs(tmp_dir, exist_ok=True)
+                cont_finder.get_poshist(tmp_dir)
+                poshist_file = os.path.join(tmp_dir, poshist_name)
+                poshist = PosHist.open(poshist_file)
+                if os.path.exists(poshist_file):
+                    os.remove(poshist_file)
 
             # initialize plot
             skyplot = SkyPlot()
@@ -196,8 +224,11 @@ def localize(start_month, end_month, pre_delay=8, bln_only_trig_det=False, bln_f
             ev_tab.loc[ev_tab['trig_ids'] == row['trig_ids'], 'l'] = poshist.get_mcilwain_l(met_event_loc)
 
         except Exception as e:
-            print(e)
-            print("Error. Problem with event id: ", row['trig_ids'])
+            import traceback
+            traceback.print_exc()
+            event_identifier = row.get('trig_ids', row.get('trigs_id', row.get('id', 'unknown')))
+            print('Error. Problem with event id: ', event_identifier)
+            continue
     # Save catalog csv
     if trig_id is None:
         ev_tab.to_csv(folder_result + 'events_table_loc.csv', index=False)

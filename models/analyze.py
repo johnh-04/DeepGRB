@@ -899,7 +899,10 @@ class Segment(GenericDisplay):
             else:
                 print("Warning, no labels to plot in image legend.")
         try:
-            fig.supylabel('count rate')
+            if hasattr(fig, 'supylabel'):
+                fig.supylabel('count rate')
+            else:
+                fig.text(0.04, 0.5, 'count rate', va='center', rotation='vertical', fontsize=12)
             fig.supxlabel('time [MET]')
         except Exception as e:
             print(e)

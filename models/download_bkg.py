@@ -1,78 +1,89 @@
-# import utils
 import os
 import logging
-# GBM data tools
-from gbm.finder import ContinuousFtp
-# Standard packages
+import datetime
+import calendar
 import pandas as pd
-import datetime, calendar
 from dateutil.relativedelta import relativedelta
+from gbm.finder import ContinuousFtp
 from connections.utils.config import FOLD_POSHIST, PATH_TO_SAVE, FOLD_CSPEC_POS
 
 
 def download_spec(start_month, end_month, bool_overwrite=False):
     """
-    This function download in the folder FOLD_CSPEC_POS the cspec and poshist files in the time range speficied in the
-     params.
-    :param start_month: str, the starting month to consider background (included). E.g. '08-2012' for August 2012.
-    :param end_month: str, the ending month to consider background (excluded). E.g. '09-2012' for August 2012.
-    :param bool_overwrite: bool, if True overwrite the files
-    :return: pandas DataFrame, table of the days downloaded.
+    Downloads CSPEC and Poshist FITS/PHA files into their respective folders.
+    Checks existing files to avoid redundant downloads.
+    
+    :param start_month: str, starting month ('MM-YYYY', e.g. '03-2019')
+    :param end_month: str, ending month excluded ('MM-YYYY', e.g. '07-2019')
+    :param bool_overwrite: bool, if True forces re-downloading existing files
+    :return: pandas DataFrame containing the list of scheduled days
     """
+    cspec_path = os.path.join(PATH_TO_SAVE, FOLD_CSPEC_POS)
+    poshist_path = os.path.join(PATH_TO_SAVE, FOLD_POSHIST)
 
-    # Initialise dataframe with the list of days
-    df_days = pd.DataFrame({'id': [], 'tStart': []})
-    # Convert string to datetime.date format
+    os.makedirs(cspec_path, exist_ok=True)
+    os.makedirs(poshist_path, exist_ok=True)
+
+    # Generate daily intervals
     date_start = datetime.date(int(start_month.split('-')[1]), int(start_month.split('-')[0]), 1)
     date_end = datetime.date(int(end_month.split('-')[1]), int(end_month.split('-')[0]), 1)
+    
+    days = []
+    tStarts = []
+    
     date_tmp = date_start
-    # Add each day to download in df_days until end_month is reached
-    while date_end > date_tmp:
+    while date_tmp < date_end:
         year = date_tmp.year
         month = date_tmp.month
-        # days in the particular year and month
         num_days = calendar.monthrange(year, month)[1]
-        # days is in "%y%m%d" format, tStart in '%Y-%m-%dT%H:%M:%S.00' and it is needed for download. 12:00 am default.
-        days = [datetime.date(year, month, day).strftime("%y%m%d") for day in range(1, num_days + 1)]
-        tStart = [datetime.datetime(year, month, day, 12).strftime('%Y-%m-%dT%H:%M:%S.00') for day in
-                  range(1, num_days + 1)]
-        # Dataframe with the list of days
-        df_days = pd.concat([df_days, pd.DataFrame({'id': days, 'tStart': tStart})], ignore_index=True)
-        date_tmp = date_tmp + relativedelta(months=1)
-    logging.info('End list days bkg.')
+        
+        for day in range(1, num_days + 1):
+            days.append(datetime.date(year, month, day).strftime("%y%m%d"))
+            tStarts.append(datetime.datetime(year, month, day, 12).strftime('%Y-%m-%dT%H:%M:%S.00'))
+            
+        date_tmp += relativedelta(months=1)
 
-    # df_days = df_days.head(7) # TAGLIO ALLA PRIMA SETTIMANA
+    df_days = pd.DataFrame({'id': days, 'tStart': tStarts})
+    logging.info(f"Target days to verify: {len(df_days)}")
 
-    os.makedirs(PATH_TO_SAVE + FOLD_CSPEC_POS, exist_ok=True)
-    os.makedirs(PATH_TO_SAVE + FOLD_POSHIST, exist_ok=True)
+    # Retry loop (up to 4 passes for network/FTP resilience)
+    for round_idx in range(4):
+        existing_files = os.listdir(cspec_path)
+        
+        # 14 NaI/BGO detector CSPEC files expected per day
+        days_to_download = []
+        for _, row in df_days.iterrows():
+            day_id = row['id']
+            # Count matching cspec files for this date
+            day_files = [f for f in existing_files if day_id in f and f.startswith("glg_cspec")]
+            if len(day_files) < 14 or bool_overwrite:
+                days_to_download.append(row)
 
-    # Run 4 times the download to be sure that a day is downloaded. Can happen that a download fails.
-    for round in [0, 1, 2, 3]:
-        logging.info('round #: {}'.format(round))
-        # List files, e.g. name: glg_cspec_nb_210929_v00.pha
-        # split for '_' and take third position -> 210929
-        list_days = [i.split('_')[3] for i in os.listdir(PATH_TO_SAVE + FOLD_CSPEC_POS) if len(i.split('_')) > 3]
-        # Conta i file in modo nativo e sicuro
-        df_days_count = df_days.copy()
-        df_days_count['num_files'] = df_days_count['id'].apply(lambda x: list_days.count(x))
-        # Cycle for each Burst day
-        for _, row in df_days_count.iterrows():
+        if not days_to_download:
+            logging.info("All daily CSPEC and Poshist files are present on disk.")
+            break
+
+        logging.info(f"Download round {round_idx}: {len(days_to_download)} days missing or incomplete.")
+
+        for row in days_to_download:
+            day_id = row['id']
             try:
-                # Check if files is already downloaded. 15 files are needed.
-                if row['num_files'] < 15 or bool_overwrite:
-                    # Delete the files that are being downloaded again
-                    lst_files_to_delete = [i for i in os.listdir(PATH_TO_SAVE + FOLD_CSPEC_POS) if row['id'] in i]
-                    [os.remove(PATH_TO_SAVE + FOLD_CSPEC_POS + "/" + i) for i in lst_files_to_delete]
-                    # Define what day download
-                    # ftp_daily = ContinuousFtp(met=row['tStart'])
-                    logging.info('Initialise connection FTP for time UTC: ' + row['tStart'])
-                    ftp_daily = ContinuousFtp(utc=row['tStart'], gps=None)
-                    # Download in the folder chosen
-                    ftp_daily.get_cspec(PATH_TO_SAVE + FOLD_CSPEC_POS)
-                    # Download poshist
-                    ftp_daily.get_poshist(PATH_TO_SAVE + FOLD_CSPEC_POS)
+                # Remove partial files if re-downloading
+                if bool_overwrite:
+                    for f in [f for f in os.listdir(cspec_path) if day_id in f]:
+                        os.remove(os.path.join(cspec_path, f))
+
+                logging.info(f"Opening FTP session for date: {day_id} (UTC: {row['tStart']})")
+                ftp_daily = ContinuousFtp(utc=row['tStart'], gps=None)
+                
+                # Download 14 CSPEC detectors files to cspec/
+                ftp_daily.get_cspec(cspec_path)
+                
+                # Download orbital poshist to poshist/
+                ftp_daily.get_poshist(poshist_path)
+                
             except Exception as e:
-                logging.error(e)
-                logging.error('Error for file: ' + row['id'][0:6])
-    logging.info("End download.")
-    return df_days_count
+                logging.error(f"Failed download for day {day_id}: {e}")
+
+    logging.info("CSPEC and Poshist data verification completed.")
+    return df_days
