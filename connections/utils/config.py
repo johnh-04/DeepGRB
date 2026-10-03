@@ -15,6 +15,11 @@ if BASE_DIR is None:
     # Direct fallback: utils -> connections -> DeepGRB
     BASE_DIR = CURRENT_FILE.parents[2]
 
+# Analysis window: explicit UTC calendar days, both ends included.
+# Shared by download and benchmark (Crupi et al. 2019 period).
+START_DATE = "2019-03-01"
+END_DATE = "2019-07-09"
+
 # Root directories
 DATA_DIR = BASE_DIR / "data"
 RESULTS_DIR = DATA_DIR / "results"
