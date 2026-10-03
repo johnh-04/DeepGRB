@@ -164,6 +164,8 @@ data/grb_classification/
 # Temp files and graphics in results
 data/results/*/data/
 data/results/*/plots/
+# Archived cache snapshots: keep README + checksums, ignore the copied data
+data/_archive_*/*/
 
 # Datafiles soft to keep for 2019 exe
 !data/*.csv
