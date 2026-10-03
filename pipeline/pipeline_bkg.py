@@ -65,10 +65,16 @@ FOCUS_MU_MIN = 1.2
 FOCUS_T_MAX = 50  # bins (204.8 s), as upstream
 ANALYZE_THRESHOLD = 3.0  # sigma, range r1
 
-# Background model: the paper-faithful model trained on 2026-09-21 by upstream-equivalent code.
+# Background model: one network per period (paper). For the 2019 baseline period the
+# paper-faithful model trained on 2026-09-21 by upstream-equivalent code is reused.
+LEGACY_PERIOD = ("2019-03-01", "2019-06-30")
 LEGACY_H5 = DATA_DIR / FOLD_NN / "model_03-2019_07-2019_4.4_2026-09-21.h5"
-MODEL_BUNDLE = DATA_DIR / FOLD_NN / "bundles" / LEGACY_H5.stem
-ALLOW_TRAINING = False  # a new (long) training requires the author's confirmation
+if (START_DATE, END_DATE) == LEGACY_PERIOD:
+    MODEL_BUNDLE = DATA_DIR / FOLD_NN / "bundles" / LEGACY_H5.stem
+else:
+    MODEL_BUNDLE = DATA_DIR / FOLD_NN / "bundles" / f"model_{START_DATE}_{END_DATE}_seed{TRAIN_SEED}"
+# A new (long) training must be explicitly enabled: DEEPGRB_ALLOW_TRAINING=1
+ALLOW_TRAINING = os.environ.get("DEEPGRB_ALLOW_TRAINING") == "1"
 
 cspec_dir = DATA_DIR / FOLD_CSPEC_POS
 poshist_dir = DATA_DIR / FOLD_POSHIST
@@ -149,13 +155,13 @@ def run_step_neural_network() -> None:
     nn.prepare(bool_del_trig=True)
     if MODEL_BUNDLE.exists():
         nn.load_bundle(MODEL_BUNDLE)
-    elif LEGACY_H5.exists():
+    elif (START_DATE, END_DATE) == LEGACY_PERIOD and LEGACY_H5.exists():
         logging.info(f"Wrapping legacy model {LEGACY_H5.name} into a bundle (scaler refitted, split seed fixed).")
         nn.bundle_from_legacy_h5(LEGACY_H5, MODEL_BUNDLE)
     elif ALLOW_TRAINING:
         nn.train(MODEL_BUNDLE, seed=TRAIN_SEED, **NN_PARAMS)
     else:
-        raise RuntimeError("No model bundle available and ALLOW_TRAINING is False.")
+        raise RuntimeError(f"No model bundle {MODEL_BUNDLE.name}: set DEEPGRB_ALLOW_TRAINING=1 to train one.")
     nn.predict(PRED_FRG, PRED_BKG, time_to_del=TIME_TO_DEL_BINS)
 
 

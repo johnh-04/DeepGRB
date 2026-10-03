@@ -1,3 +1,8 @@
+# OBSOLETE (2026-10-03): uses APIs removed in the Phase 2 fixes and printed
+# "ALL PIPELINE MODULES OPERATIONAL" even with precision 0.06 and 8 alarms/day:
+# it never validated the science. To run another period use
+#   DEEPGRB_START_DATE=... DEEPGRB_END_DATE=... python pipeline/pipeline_bkg.py
+# (see docs/BASELINE.md). Kept for reference only.
 """
 End-to-End Pipeline Execution on an Isolated 1-Week Sandbox (data_test/).
 Performs download, preprocessing, neural training, background inference,

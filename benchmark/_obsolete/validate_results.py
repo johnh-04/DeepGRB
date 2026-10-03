@@ -1,3 +1,7 @@
+"""
+OBSOLETE (2026-10-03): replaced by benchmark/validate.py.
+Bugs: base_dir pointed to benchmark/data/... (non-existent); exact 10 s tolerance; many-to-one matching.
+"""
 import os
 import sys
 import numpy as np

@@ -5,6 +5,7 @@ Plots observed foreground vs neural background distributions across energy chann
 
 import logging
 from pathlib import Path
+from typing import Optional
 import matplotlib
 matplotlib.use("Agg")  # Headless mode for cluster execution
 import matplotlib.pyplot as plt

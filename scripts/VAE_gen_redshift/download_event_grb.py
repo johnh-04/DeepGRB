@@ -5,7 +5,7 @@ Queries the online Burst Catalog and downloads event-level CTIME or TTE high-res
 
 import logging
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 import pandas as pd
 
 from gbm.finder import BurstCatalog, TriggerFtp

@@ -19,8 +19,9 @@ if BASE_DIR is None:
 # Shared by download and benchmark. Crupi et al. cover 2019-03-01 -> 2019-07-09;
 # this baseline deliberately stops at 2019-06-30, so the 4 reference events of
 # July (2019_96..2019_99) are out of scope.
-START_DATE = "2019-03-01"
-END_DATE = "2019-06-30"
+# Another period can be run without editing code: DEEPGRB_START_DATE / DEEPGRB_END_DATE.
+START_DATE = os.environ.get("DEEPGRB_START_DATE", "2019-03-01")
+END_DATE = os.environ.get("DEEPGRB_END_DATE", "2019-06-30")
 
 # Root directories
 DATA_DIR = BASE_DIR / "data"
