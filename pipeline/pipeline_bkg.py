@@ -52,6 +52,7 @@ from models.analyze import analyze
 from models.event_classifier import CrupiEventClassifier
 from models.localize_event import localize
 from models.utils.GBMutils import add_trig_gbm_to_frg
+from utils.period import days_with_data, in_window
 
 # Logging setup
 logging.basicConfig(
@@ -421,34 +422,30 @@ def run_step_localization_and_benchmark(df_pipeline: pd.DataFrame) -> None:
     logging.info(f"Loading ground truth catalog from: {catalog_path.name}")
     df_cat = pd.read_csv(catalog_path)
 
-    # Resolve date column in ground truth table
-    date_col = next((c for c in ["trigger_time", "time", "datetime", "trig_time", "met_time"] if c in df_cat.columns), None)
-    if not date_col:
-        logging.error("Could not find a valid timestamp column in catalog. Skipping benchmark.")
+    # Ground truth times must be UTC strings (MET-only catalogs are not supported)
+    utc_col = next((c for c in ["trigger_time", "time", "datetime"]
+                    if c in df_cat.columns and not pd.api.types.is_numeric_dtype(df_cat[c])), None)
+    if utc_col is None:
+        logging.error("Could not find a UTC timestamp column in catalog. Skipping benchmark.")
         return
+    df_cat["datetime_clean"] = pd.to_datetime(df_cat[utc_col].astype(str).str.slice(0, 19), errors="coerce")
 
-    # Check whether ground truth timestamps are MET or UTC
-    is_met_cat = pd.api.types.is_numeric_dtype(df_cat[date_col])
-    if not is_met_cat:
-        df_cat["datetime_clean"] = pd.to_datetime(df_cat[date_col].astype(str).str.slice(0, 19), errors="coerce")
-        start_date = pd.to_datetime(START_MONTH, format="%m-%Y")
-        end_date = pd.to_datetime(END_MONTH, format="%m-%Y") + pd.DateOffset(months=1)
-        df_cat_window = df_cat[(df_cat["datetime_clean"] >= start_date) & (df_cat["datetime_clean"] < end_date)].copy()
-        total_days = max((end_date - start_date).days, 1)
-    else:
-        # If timestamps are MET, fallback to datetime column if present for date filtering
-        if "time" in df_cat.columns or "trigger_time" in df_cat.columns:
-            utc_src = "trigger_time" if "trigger_time" in df_cat.columns else "time"
-            df_cat["datetime_clean"] = pd.to_datetime(df_cat[utc_src].astype(str).str.slice(0, 19), errors="coerce")
-            start_date = pd.to_datetime(START_MONTH, format="%m-%Y")
-            end_date = pd.to_datetime(END_MONTH, format="%m-%Y") + pd.DateOffset(months=1)
-            df_cat_window = df_cat[(df_cat["datetime_clean"] >= start_date) & (df_cat["datetime_clean"] < end_date)].copy()
-            total_days = max((end_date - start_date).days, 1)
-        else:
-            df_cat_window = df_cat.copy()
-            total_days = 122  # Approximate production window in days
+    # Explicit inclusive window, restricted to the days for which data actually exist.
+    # The number of such days is the False Alarm Rate denominator.
+    frg_path = pred_dir / f"frg_{TIMEFRAME_LABEL}.csv"
+    valid_days = days_with_data(pd.read_csv(frg_path, usecols=["timestamp"])["timestamp"], START_DATE, END_DATE)
+    total_days = len(valid_days)
+    if total_days == 0:
+        logging.error(f"No data days inside {START_DATE} -> {END_DATE}. Skipping benchmark.")
+        return
+    in_win = in_window(df_cat["datetime_clean"], START_DATE, END_DATE)
+    on_data_day = df_cat["datetime_clean"].dt.strftime("%Y-%m-%d").isin(valid_days)
+    df_cat_window = df_cat[in_win & on_data_day].copy()
 
-    logging.info(f"Official ground truth events in production window: {len(df_cat_window)} across {total_days} days.")
+    logging.info(
+        f"Window {START_DATE} -> {END_DATE}: {int(in_win.sum())} catalog events; "
+        f"{len(df_cat_window)} fall on the {total_days} days with data (FAR denominator)."
+    )
 
     if df_pipeline.empty:
         print("  -> 0 pipeline detections in this window.")
