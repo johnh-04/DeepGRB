@@ -1,164 +1,60 @@
 """
-Event analysis and temporal clustering module.
-Converts Poisson-FOCuS change-points into physical astrophysical event candidates.
+Event analysis: from Poisson-FOCuS significance tables to candidate events.
+
+Faithful to the upstream implementation used for Crupi et al. (2023):
+- trigger condition: significance > threshold in range r1 for >= MIN_DET_NUMBER detectors
+  (and < MAX_DET_NUMBER, which with 12 NaI never vetoes);
+- triggers closer than 600 s (in bins) are merged into events;
+- segments use inclusive label slicing: the end index is one bin after the last
+  triggered bin, so duration = met[end] - met[start];
+- the event start is extended backwards by the FOCuS change-point offset;
+- the per-event significance for each range is S = sum(N - B) / sqrt(sum(B)) over the
+  triggered detectors of that range and the offset-extended interval, maximised over
+  21 quantile cuts of the residuals (paper, note 2). Inputs are the rates stored in
+  the frg/bkg matrices (same units as upstream).
+
+Additions with respect to upstream: consistency C = max(S_r0, S_r1, S_r2) and the
+confidence tier CE (R/S/P); bins with missing values are ignored in S instead of
+turning the whole range into S = 0.
 """
 
-from bisect import bisect_left, bisect_right
+import logging
+from dataclasses import dataclass
 from itertools import groupby
-from math import ceil
 from operator import itemgetter
 from pathlib import Path
-import sqlite3
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Set
+from typing import Dict, List, Optional, Sequence, Tuple
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
-from scipy import stats
-import seaborn as sns
 
-import connections.utils.config as cfg
-from connections.utils.config import (
-    GBM_BURST_DB,
-    GBM_TRIG_DB,
-)
 from utils.keys import get_keys
 
 BINLENGTH = 4.096
 MIN_DET_NUMBER = 1
 MAX_DET_NUMBER = 13
+MERGE_SECONDS = 600
+QUANTILE_GRID = np.arange(0, 21) / 20
+NAI_IDS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b"]
+NAI_DETS = [f"n{i}" for i in NAI_IDS]
+RANGES = ["r0", "r1", "r2"]
 
-
-class MissingDataError(Exception):
-    """Raised when telemetry or trigger data are missing."""
-
-
-class GenericDisplay:
-    """Base pretty-printer for pipeline event segments."""
-
-    def __str__(self) -> str:
-        return f"<{self.__class__.__name__}: {self.gather_attrs()}>"
-
-    def gather_attrs(self) -> str:
-        attrs = "\n"
-        for key, val in self.__dict__.items():
-            if isinstance(val, list) and len(val) > 5:
-                attrs += f"\t{key} = [{', '.join(str(v) for v in val[:5])}..]\n"
-            elif isinstance(val, pd.DataFrame):
-                pass
-            else:
-                attrs += f"\t{key} = {val}\n"
-        return attrs
-
-
-class Segment(GenericDisplay):
-    """Represents a candidate time segment over continuous Fermi observations."""
-
-    def __init__(
-        self,
-        start: int,
-        end: int,
-        fermi: pd.DataFrame,
-        nn: pd.DataFrame,
-        focus: pd.DataFrame,
-        offset: pd.DataFrame,
-        trigs: Optional[pd.DataFrame] = None,
-    ) -> None:
-        self.start = int(start)
-        self.end = int(end)
-
-        # Slice DataFrames to the specific segment interval
-        self.fermi = fermi.iloc[self.start : self.end].copy().reset_index(drop=True)
-        self.nn = nn.iloc[self.start : self.end].copy().reset_index(drop=True)
-        self.focus = focus.iloc[self.start : self.end].copy().reset_index(drop=True)
-        self.offset = offset.iloc[self.start : self.end].copy().reset_index(drop=True)
-
-        if trigs is not None and len(trigs) > 0:
-            self.trigs = trigs.iloc[self.start : self.end].copy().reset_index(drop=True)
-        else:
-            self.trigs = pd.DataFrame({"id": ["none"] * len(self.fermi)})
-
-        # Residual noise estimation (MAD)
-        num_cols = self.nn.select_dtypes(include=["number"]).columns
-        diff = self.fermi[num_cols] - self.nn[num_cols]
-        mad = stats.median_abs_deviation(diff, axis=0, scale="normal", nan_policy="omit")
-        self.sigma_residual = dict(zip(num_cols, mad))
-
-    def get_catalog_triggers(self) -> Set[str]:
-        if "id" in self.trigs.columns:
-            return set(self.trigs["id"].dropna()) - {"none"}
-        return set()
-
-    def did_focus_trigger(self, threshold: float, min_dets: int, max_dets: int) -> bool:
-        triggers = fetch_triggers(self.focus, threshold, min_dets, max_dets)
-        return len(triggers) > 0
-
-    def plot(
-        self,
-        det: List[str],
-        enlarge: int = 0,
-        figsize: Optional[Tuple[int, int]] = None,
-        legend: bool = True,
-        bln_ylim: bool = True,
-    ) -> Tuple[plt.Figure, Any]:
-        """Plots multi-channel count rates and neural background estimates."""
-        det = sorted(det)
-        cmap = plt.get_cmap("viridis")
-        colors = cmap(np.linspace(0.0, 0.8, 12))
-        keys_det = [str(i) for i in range(10)] + ["a", "b"]
-        colors_dic = dict(zip(keys_det, colors))
-        custom_lines = {i: Line2D([0], [0], color=colors_dic[i], lw=4) for i in keys_det}
-
-        fig, ax = plt.subplots(3, 1, sharex=True, figsize=figsize or (7, 6), tight_layout=True)
-
-        for d in det:
-            range_label = int(d[-1])
-            mets = self.fermi["met"].values
-            ax[range_label].step(mets, self.fermi[d], color=colors_dic[d[1]], where="pre", label=d[:2])
-            ax[range_label].plot(mets, self.nn[d], color=colors_dic[d[1]])
-
-        for trig in self.get_catalog_triggers():
-            if trig != "none":
-                mask = self.trigs["id"] == trig
-                if mask.any():
-                    start_m = self.fermi.loc[mask, "met"].values[0]
-                    end_m = self.fermi.loc[mask, "met"].values[-1]
-                    for i in range(3):
-                        ax[i].axvspan(start_m, end_m, color="black", alpha=0.1)
-
-        for i in range(3):
-            if bln_ylim:
-                ax[i].set_ylim(bottom=0, top=None)
-            ax[i].set_ylabel(f"range {i}")
-
-        if legend and det:
-            indices = []
-            for d in det:
-                if d[1] not in indices:
-                    indices.append(d[1])
-            labels = [f"n{i}" for i in indices]
-            lines = [custom_lines[i] for i in indices]
-            if labels:
-                fig.legend(lines, labels, framealpha=1.0, ncol=ceil(len(labels) / 4), loc="upper right")
-
-        fig.supylabel("count rate")
-        fig.supxlabel("time [MET]")
-        return fig, ax
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 
 def merge(data: Sequence[Tuple[int, int]], length: int) -> List[Tuple[int, int]]:
-    """Merges adjacent trigger segments closer than length time-bins."""
-    if not data:
-        return []
+    """
+    Merges consecutive (start, end) index pairs while the span from the first start
+    to the current end stays below `length` bins.
+
+    Example: [(1,4), (5,9), (10,11), (12,13), (20,24), (25,26)], length=10
+    -> [(1,9), (10,13), (20,26)].
+    """
     out = []
     i = 0
-    n = len(data)
-    while i < n:
+    while i < len(data):
         j = 0
-        while (i + j < n) and (data[i + j][1] - data[i][0] < length):
+        while i + j < len(data) and data[i + j][1] - data[i][0] < length:
             j += 1
         if j == 0:
             out.append((data[i][0], data[i][1]))
@@ -175,118 +71,191 @@ def fetch_triggers(
     min_dets_num: int = MIN_DET_NUMBER,
     max_dets_num: int = MAX_DET_NUMBER,
 ) -> List[Tuple[int, int]]:
-    """Identifies multi-detector trigger coincidences above threshold."""
-    out = {}
-    for d in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b"]:
-        sub_tbl = table[get_keys(ns=[d], rs=["1"])]
-        out[d] = (sub_tbl > threshold).any(axis=1)
-
-    merged_df = pd.DataFrame(out, index=table.index)
-    dets_over = merged_df.sum(axis=1)
+    """
+    Trigger condition on a significance table (RangeIndex, one column per channel).
+    Returns (start, end) index pairs; end is one past the last triggered bin.
+    """
+    over = pd.DataFrame(
+        {d: (table[get_keys(ns=[d], rs=["1"])] > threshold).any(axis=1) for d in NAI_IDS},
+        index=table.index,
+    )
+    dets_over = over.sum(axis=1)
     data = dets_over[dets_over >= min_dets_num]
 
-    trig_segs = []
+    segments = []
     for _, g in groupby(enumerate(data.index), lambda ix: ix[0] - ix[1]):
-        indices = list(map(itemgetter(1), g))
-        start, end = indices[0], indices[-1] + 1
+        idx = list(map(itemgetter(1), g))
+        start, end = idx[0], idx[-1] + 1
+        # inclusive label slice, as upstream: also checks the bin right after the trigger
         if (dets_over.loc[start:end] < max_dets_num).all():
-            trig_segs.append((start, end))
-    return trig_segs
+            segments.append((start, end))
+    return segments
+
+
+@dataclass
+class Segment:
+    """Index limits of a trigger or event on the continuous timeline."""
+
+    start: int
+    end: int
+    start_offset: int
+
+    @property
+    def end_offset(self) -> int:
+        return self.end - 1
+
+    @classmethod
+    def from_limits(cls, start: int, end: int, offset: pd.DataFrame) -> "Segment":
+        """Extends the start by the most negative FOCuS offset at the start bin (upstream rule)."""
+        offset_ev = offset.loc[start].fillna(0).min()
+        start_offset = int(max(start + offset_ev + 1, 0))
+        return cls(int(start), int(end), start_offset)
+
+
+def event_significance(
+    frg_win: pd.DataFrame,
+    bkg_win: pd.DataFrame,
+    channels: Sequence[str],
+    quantiles: Sequence[float] = QUANTILE_GRID,
+) -> Tuple[float, float]:
+    """
+    S = sum(N - B) / sqrt(sum(B)) over `channels`, keeping only the bins whose summed
+    residual is >= the q-quantile of the residuals; maximised over q.
+    Returns (S, q). S is 0 when no cut gives a positive value.
+    """
+    valid = frg_win[channels].notna().all(axis=1) & bkg_win[channels].notna().all(axis=1)
+    n = frg_win.loc[valid, channels].sum(axis=1).to_numpy(dtype=float)
+    b = bkg_win.loc[valid, channels].sum(axis=1).to_numpy(dtype=float)
+    if n.size == 0:
+        return 0.0, 0.0
+    diff = n - b
+    best, best_q = 0.0, 0.0
+    for q in quantiles:
+        sel = diff >= np.quantile(diff, q)
+        b_sum = b[sel].sum()
+        if b_sum <= 0:
+            continue
+        s = diff[sel].sum() / np.sqrt(b_sum)
+        if s > best:
+            best, best_q = float(s), float(q)
+    return best, best_q
+
+
+def confidence_tier(sigmas: Dict[str, float], detectors: Sequence[str]) -> str:
+    """CE tier of the paper: R = several detectors and several ranges, S = several detectors one range, P otherwise."""
+    n_ranges = sum(1 for r in RANGES if sigmas.get(r, 0) > 0)
+    if len(set(detectors)) > 1:
+        return "R" if n_ranges > 1 else "S"
+    return "P"
+
+
+def catalog_trigger_ids(met: np.ndarray, trig_catalog: pd.DataFrame) -> np.ndarray:
+    """Per-bin name of the catalog trigger whose (met_time, met_end_time) strictly contains the bin (upstream rule)."""
+    ids = np.full(len(met), "none", dtype=object)
+    if len(met) == 0:
+        return ids
+    start_met, end_met = np.nanmin(met), np.nanmax(met)
+    cat = trig_catalog[(trig_catalog["met_time"] > start_met) & (trig_catalog["met_end_time"] < end_met)]
+    for _, row in cat.sort_values("met_time").iterrows():
+        ids[(met > row["met_time"]) & (met < row["met_end_time"])] = row["name"]
+    return ids
+
+
+def tableize(
+    segments: Sequence[Segment],
+    frg: pd.DataFrame,
+    bkg: pd.DataFrame,
+    focus: pd.DataFrame,
+    trig_ids: np.ndarray,
+    threshold: float,
+) -> pd.DataFrame:
+    """Builds the catalog table (one row per segment) with per-range significance, C and CE."""
+    rows = []
+    for i, s in enumerate(segments):
+        foc = focus.loc[s.start:s.end]
+        over = (foc > threshold).any()
+        trig_channels = [c for c in over.index if over[c]]
+        detectors = sorted({c.split("_")[0] for c in trig_channels}, key=NAI_DETS.index)
+
+        frg_off = frg.loc[s.start_offset:s.end_offset]
+        bkg_off = bkg.loc[s.start_offset:s.end_offset]
+        sigmas, qcuts = {}, {}
+        for rng in RANGES:
+            channels = [c for c in trig_channels if c.endswith("_" + rng)]
+            if channels:
+                sigmas[rng], qcuts[rng] = event_significance(frg_off, bkg_off, channels)
+            else:
+                sigmas[rng], qcuts[rng] = 0.0, 0.0
+
+        names = sorted(set(trig_ids[s.start:s.end + 1]) - {"none"})
+        end_row = min(s.end, len(frg) - 1)  # a trigger running to the last bin has end == len
+        rows.append({
+            "trig_ids": i,
+            "start_index": s.start,
+            "start_met": frg.at[s.start, "met"],
+            "start_times": frg.at[s.start, "timestamp"],
+            "start_times_offset": frg.at[s.start_offset, "timestamp"],
+            "end_index": s.end,
+            "end_met": frg.at[end_row, "met"],
+            "end_times": frg.at[end_row, "timestamp"],
+            "duration": frg.at[end_row, "met"] - frg.at[s.start, "met"],
+            "catalog_triggers": " ".join(names),
+            "trig_dets": " ".join(trig_channels),
+            "detectors": " ".join(detectors),
+            "sigma_r0": sigmas["r0"],
+            "sigma_r1": sigmas["r1"],
+            "sigma_r2": sigmas["r2"],
+            "sigma_C": max(sigmas.values()),
+            "CE": confidence_tier(sigmas, detectors),
+            "qtl_cut_r0": qcuts["r0"],
+            "qtl_cut_r1": qcuts["r1"],
+            "qtl_cut_r2": qcuts["r2"],
+        })
+    columns = [
+        "trig_ids", "start_index", "start_met", "start_times", "start_times_offset",
+        "end_index", "end_met", "end_times", "duration", "catalog_triggers", "trig_dets",
+        "detectors", "sigma_r0", "sigma_r1", "sigma_r2", "sigma_C", "CE",
+        "qtl_cut_r0", "qtl_cut_r1", "qtl_cut_r2",
+    ]
+    return pd.DataFrame(rows, columns=columns)
 
 
 class EventAnalyzer:
-    """Encapsulates context, ground truth cross-matching, and event table production."""
+    """Builds trigger and event tables from explicit input files."""
 
-    def __init__(self, start_month: str, end_month: str) -> None:
-        self.start_month = start_month
-        self.end_month = end_month
+    def __init__(
+        self,
+        frg_path: Path,
+        bkg_path: Path,
+        trig_path: Path,
+        offset_path: Path,
+        trig_catalog_path: Path,
+    ) -> None:
+        self.frg = pd.read_csv(frg_path)
+        self.bkg = pd.read_csv(bkg_path)
+        self.focus = pd.read_csv(trig_path)
+        self.offset = pd.read_csv(offset_path)
+        lengths = {len(self.frg), len(self.bkg), len(self.focus), len(self.offset)}
+        if len(lengths) != 1:
+            raise ValueError(f"Input tables have different lengths: {lengths}")
+        trig_catalog = pd.read_csv(trig_catalog_path)
+        self.trig_ids = catalog_trigger_ids(self.frg["met"].to_numpy(dtype=float), trig_catalog)
 
-        frg_file = cfg.DATA_DIR / cfg.FOLD_PRED / f"frg_{start_month}_{end_month}.csv"
-        bkg_file = cfg.DATA_DIR / cfg.FOLD_PRED / f"bkg_{start_month}_{end_month}.csv"
-        trig_file = cfg.DATA_DIR / cfg.FOLD_TRIG / f"trig_{start_month}_{end_month}.csv"
-        offset_file = cfg.DATA_DIR / cfg.FOLD_TRIG / f"offset_{start_month}_{end_month}.csv"
+    def run(self, threshold: float, out_dir: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """Writes triggers_table.csv and events_table.csv into out_dir; returns both tables."""
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        keys = get_keys()
 
-        self.fermi = pd.read_csv(frg_file)
-        self.nn = pd.read_csv(bkg_file)
-        self.focus = pd.read_csv(trig_file)
-        self.offset = pd.read_csv(offset_file)
+        trig_limits = fetch_triggers(self.focus[keys], threshold)
+        trig_segments = [Segment.from_limits(s, e, self.offset) for s, e in trig_limits]
+        event_limits = merge(trig_limits, length=int(MERGE_SECONDS / BINLENGTH))
+        event_segments = [Segment.from_limits(s, e, self.offset) for s, e in event_limits]
+        logging.info(f"{len(trig_segments)} trigger segments -> {len(event_segments)} events (threshold {threshold})")
 
-        # Residual noise estimation (MAD)
-        num_cols = self.nn.select_dtypes(include=["number"]).columns
-        diff = self.fermi[num_cols] - self.nn[num_cols]
-        mad = stats.median_abs_deviation(diff, axis=0, scale="normal", nan_policy="omit")
-        self.sigma_residual = dict(zip(num_cols, mad))
-
-        # Crop ground-truth trigger catalog
-        trig_cat = pd.read_csv(GBM_TRIG_DB).sort_values("met_time")
-        min_met = self.fermi["met"].values[0]
-        max_met = self.fermi["met"].values[-1]
-        self.trigger_catalog = trig_cat[
-            (trig_cat["met_time"] >= min_met) & (trig_cat["met_end_time"] <= max_met)
-        ].copy()
-
-        # Build ground-truth time series
-        self.trigs = pd.DataFrame({
-            "met": self.fermi["met"].values,
-            "timestamp": self.fermi["timestamp"].values,
-            "id": "none"
-        })
-        for _, row in self.trigger_catalog.iterrows():
-            mask = (self.trigs["met"] >= row["met_time"]) & (self.trigs["met"] <= row["met_end_time"])
-            self.trigs.loc[mask, "id"] = row["name"]
-
-    def run_analysis(self, threshold: float, bln_plot: bool = False) -> bool:
-        """Executes full clustering and exports candidate event tables."""
-        res_dir = Path(getattr(cfg, "RESULTS_DIR", cfg.DATA_DIR / "results")) / f"frg_{self.start_month}_{self.end_month}"
-        res_dir.mkdir(parents=True, exist_ok=True)
-
-        triggers_limits = fetch_triggers(self.focus, threshold, MIN_DET_NUMBER, MAX_DET_NUMBER)
-        triggers = [
-            Segment(t[0], t[1], self.fermi, self.nn, self.focus, self.offset, self.trigs)
-            for t in triggers_limits
-        ]
-        print(f"Identified {len(triggers)} trigger segments.")
-
-        events_limits = merge(triggers_limits, length=int(600 / BINLENGTH))
-        events = [
-            Segment(t[0], t[1], self.fermi, self.nn, self.focus, self.offset, self.trigs)
-            for t in events_limits
-        ]
-        print(f"Resolved {len(events)} physical events.")
-
-        # Build tabular summary
-        event_records = []
-        for i, ev in enumerate(events):
-            num_focus = ev.focus.select_dtypes(include=["number"])
-            trig_mask = (num_focus > threshold).any()
-            active_channels = " ".join(trig_mask[trig_mask].index.tolist())
-            event_records.append({
-                "trig_ids": i,
-                "start_index": ev.start,
-                "start_met": ev.fermi["met"].iloc[0],
-                "start_times": ev.fermi["timestamp"].iloc[0],
-                "end_index": ev.end,
-                "end_met": ev.fermi["met"].iloc[-1],
-                "duration": ev.fermi["met"].iloc[-1] - ev.fermi["met"].iloc[0],
-                "catalog_triggers": " ".join(ev.get_catalog_triggers()),
-                "trig_dets": active_channels,
-            })
-
-        cols = ["trig_ids", "start_index", "start_met", "start_times", "end_index", "end_met", "duration", "catalog_triggers", "trig_dets"]
-        df_events = pd.DataFrame(event_records, columns=cols)
-        df_events.to_csv(res_dir / "events_table.csv", index=False)
-        print("Events table successfully saved.")
-        return True
-
-
-def analyze(
-    start_month: str,
-    end_month: str,
-    threshold: float,
-    type_time: str = "t90",
-    type_counts: str = "flux",
-    bln_plot: bool = False,
-) -> bool:
-    """Wrapper function preserving the original script interface."""
-    analyzer = EventAnalyzer(start_month, end_month)
-    return analyzer.run_analysis(threshold, bln_plot=bln_plot)
+        args = (self.frg, self.bkg, self.focus[keys], self.trig_ids, threshold)
+        triggers_table = tableize(trig_segments, *args)
+        events_table = tableize(event_segments, *args)
+        triggers_table.to_csv(out_dir / "triggers_table.csv", index=False)
+        events_table.to_csv(out_dir / "events_table.csv", index=False)
+        return triggers_table, events_table
