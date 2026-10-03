@@ -64,3 +64,39 @@ Ogni voce: cosa è cambiato, perché, risultato misurato (valori reali dai file)
 - Se la maschera delle celle 10.0 coincide con una ricostruzione esatta su tutti i 36 canali (controllati 3 canali: `n0_r1`, `n5_r0`, `nb_r2`).
 - Il diff dei file non chiave rispetto a upstream (`localize_event.py`, `download_bkg.py`, `GBMutils.py`, `fermi_data_tools.py`), salvo quanto già noto dall'analisi della repo.
 - Il funzionamento attuale del download FTP (non eseguito).
+
+---
+
+## 2026-10-03 — Fase 1: finestra dati
+
+### Decisione (Giovanni, 2026-10-03)
+- La baseline si ferma al **2019-06-30**: `END_DATE = "2019-06-30"` (non 2019-07-09 come in docs/WORKING_RULES.md §5.5).
+- Conseguenza: i 4 eventi di riferimento di luglio (`2019_96`, `2019_97`, `2019_98`, `2019_99`) sono **fuori ambito** e vanno esclusi dal denominatore in Fase 3. docs/WORKING_RULES.md non è ancora stato aggiornato su questo punto.
+
+### Modifiche (un commit per bug)
+1. `5d3905f`: `START_DATE`/`END_DATE` inclusivi in `connections/utils/config.py`; `utils/period.py` (`window_days`, `in_window`, `months_to_window`, `days_with_data`). Motivo: download e benchmark derivavano la finestra da etichette di mese con semantiche diverse (§5.5).
+2. `c59221f`: download riscritto (§5.6). `download_days(start, end)` restituisce la colonna `day` (YYMMDD, con alias `id` per `build_table`); retry per giorno **e per file** (un rivelatore alla volta); i file vengono scaricati in staging, validati con i checksum FITS e poi spostati con `os.replace`; i file esistenti non vengono mai riscritti (gbm-data-tools apre i file in append: riscaricare un file esistente lo corromperebbe); verifica finale con log dei giorni incompleti. La pipeline non salta più download e preprocessing quando trova un CSV qualsiasi: preprocessa solo i giorni completi senza tabella.
+3. `8b8208a`: benchmark con finestra esplicita; la verità a terra è limitata ai giorni con dati in `frg`, e quel numero di giorni è il denominatore del FAR.
+4. Questo commit: `END_DATE` → 2019-06-30; lo script di inventario legge le date dalla config.
+
+### Test (`python -m unittest discover -s tests -t .`)
+- 19 test, tutti sulle funzioni reali (FTP sostituito da un fake che scrive FITS piccoli).
+- Prima delle modifiche: 2/2 moduli in errore (`utils.period` e `download_days` assenti, nessuna colonna `day`). Dopo: **19/19 OK**.
+- Coperti: inclusività della finestra, schedule con `day`, rilevamento dei file mancanti o vuoti, nessuna connessione se i dati sono completi, richiesta dei soli file mancanti, retry dopo un errore transitorio, file corrotto rifiutato e non spostato, file esistenti invariati (byte e mtime), wrapper legacy sui dati di produzione (122 giorni, senza FTP).
+
+### Risultati misurati
+- Inventario (`python -m benchmark.audit.data_inventory`): finestra 2019-03-01 → 2019-06-30, **122/122** giorni completi (CSPEC, POSHIST, `bkg`, `pred`).
+- Idempotenza: `download_days()` con un `ftp_factory` che solleva un errore se chiamato → 122/122 completi, **nessuna richiesta FTP**. Con il `ContinuousFtp` reale: "All 122 days complete", nessun file scaricato.
+- Finestra del benchmark (stessi helper della pipeline, sui dati attuali):
+  - regola vecchia: 177 eventi del catalogo trigger GBM su 153 giorni;
+  - regola nuova: **143 eventi su 122 giorni con dati** (GRB 93, TGF 27, UNCERT 11, LOCLPAR 7, SFLARE 5).
+
+### Download reale interrotto (prova sul campo del nuovo downloader)
+- Prima della decisione è partito il download di luglio da HEASARC. È stato fermato su richiesta.
+- Installati e validati (checksum FITS OK): 2019-07-01 e 2019-07-02 completi (14 CSPEC + POSHIST ciascuno), più `glg_cspec_n0_190703_v00.pha`. Sono 29 file in totale; restano in `data/cspec` e `data/poshist`, fuori finestra e non letti da nessuno step (non esiste nessun `bkg/1907*.csv`).
+- La cartella di staging `.download_190703_*`, con un `n1` interrotto a metà e mai validato, è stata rimossa.
+
+### Note e limiti
+- Importare `gbm.finder` apre già un socket FTP verso HEASARC (connessione a livello di classe nella libreria). "Idempotente" significa quindi: nessun file scaricato e nessuna richiesta per giorno, non zero connessioni.
+- `test_pipeline.py` usa ancora un proprio download sulla sandbox: non toccato (fuori ambito della Fase 1).
+- `ModelNN.prepare` usa ancora le etichette di mese (`end31`, M4 in DIFF_UPSTREAM): da allineare alle date in Fase 2.
