@@ -62,9 +62,10 @@ class RunData:
         self.data_days = days_with_data(self.timestamp, START_DATE, END_DATE)
 
         self.events = pd.read_csv(run / "results" / "events_table.csv")
-        ts_index = pd.Index(self.timestamp)
-        pos = ts_index.get_indexer(self.events["start_times_offset"])
-        self.events["t_start"] = np.where(pos >= 0, self.met[np.clip(pos, 0, None)], self.events["start_met"])
+        # 4 timestamps repeat at day boundaries (overlapping CSPEC files): keep the first occurrence
+        ts_to_met = pd.Series(self.met, index=self.timestamp.values)
+        ts_to_met = ts_to_met[~ts_to_met.index.duplicated(keep="first")]
+        self.events["t_start"] = self.events["start_times_offset"].map(ts_to_met).fillna(self.events["start_met"])
         self.events["t_end"] = self.events["end_met"]
         self.manifest = json.loads((run / "manifest.json").read_text()) if (run / "manifest.json").exists() else {}
 
@@ -187,6 +188,9 @@ def recall_line(df: pd.DataFrame) -> str:
 
 
 def diagnose(row) -> str:
+    if row.get("covered_by_event", -1) >= 0:
+        return (f"detected but merged: inside our event {int(row['covered_by_event'])}, "
+                f"already matched to {row['covered_event_matched_to']} (Crupi lists them as separate events)")
     if not row["has_data"]:
         return "no valid data at the reference time (SAA mask / gap)"
     if row["near_saa_150s"]:
@@ -289,6 +293,7 @@ def main() -> None:
     out = args.out
     out.mkdir(parents=True, exist_ok=True)
 
+    args.run = args.run.resolve()
     rd = RunData(args.run)
     ev = rd.events
     cat = load_trigger_catalog(rd)
@@ -299,7 +304,19 @@ def main() -> None:
     cat_m, cat_stats = validate_catalog(rd, cat, grb, PRIMARY_MARGIN)
     known = validate_reference(rd, known_all, PRIMARY_MARGIN)
     unknown = validate_reference(rd, unknown_all, PRIMARY_MARGIN)
+    # which reference took each event (known and unknown are matched separately)
+    taken = {}
     for r in (known, unknown):
+        for _, x in r[r["matched"]].iterrows():
+            taken.setdefault(int(x["event"]), []).append(x["id"])
+    for r in (known, unknown):
+        cov, cov_to = [], []
+        for _, x in r.iterrows():
+            inside = ev.index[(ev["t_start"] - PRIMARY_MARGIN <= x["t"]) & (x["t"] <= ev["t_end"] + PRIMARY_MARGIN)]
+            j = int(inside[0]) if (not x["matched"] and len(inside)) else -1
+            cov.append(int(ev.at[j, "trig_ids"]) if j >= 0 else -1)
+            cov_to.append(" ".join(taken.get(j, [])) if j >= 0 else "")
+        r["covered_by_event"], r["covered_event_matched_to"] = cov, cov_to
         r["diagnosis"] = [diagnose(x) if not x["matched"] else "" for _, x in r.iterrows()]
     cat_m.to_csv(out / "matches_gbm_catalog.csv", index=False)
     known.to_csv(out / "matches_crupi_known.csv", index=False)
@@ -312,8 +329,21 @@ def main() -> None:
     ev["match_gbm"] = ev.index.isin(ev_gbm)
     ev["match_crupi_known"] = ev.index.isin(ev_known)
     ev["match_crupi_unknown"] = ev.index.isin(ev_unknown)
-    lonely = ev[~(ev["match_gbm"] | ev["match_crupi_known"] | ev["match_crupi_unknown"])]
-    lonely_cols = ["trig_ids", "start_times", "duration", "detectors", "sigma_r0", "sigma_r1", "sigma_r2", "sigma_C", "CE", "catalog_triggers"]
+    lonely = ev[~(ev["match_gbm"] | ev["match_crupi_known"] | ev["match_crupi_unknown"])].copy()
+    # per-event diagnosis: SAA proximity, nearest Crupi reference, orbit, class (if available)
+    ref_t = np.concatenate([known_all["t"].to_numpy(), unknown_all["t"].to_numpy()])
+    ref_id = np.concatenate([known_all["id"].to_numpy(), unknown_all["id"].to_numpy()])
+    edges = rd.gap_edges
+    lonely["dist_saa_gap_s"] = [float(np.min(np.abs(edges - t))) if len(edges) else np.nan for t in lonely["t_start"]]
+    nearest = [int(np.argmin(np.abs(ref_t - t))) for t in lonely["t_start"]]
+    lonely["nearest_crupi"] = [ref_id[i] for i in nearest]
+    lonely["nearest_crupi_dt_h"] = [(ref_t[i] - t) / 3600 for i, t in zip(nearest, lonely["t_start"])]
+    cls_path = rd.run / "results" / "events_classified.csv"
+    extra = ["l", "lat_fermi", "lon_fermi", "predicted_class"]
+    if cls_path.exists():
+        lonely = lonely.merge(pd.read_csv(cls_path)[["trig_ids"] + extra], on="trig_ids", how="left")
+    lonely_cols = ["trig_ids", "start_times", "duration", "detectors", "sigma_r0", "sigma_r1", "sigma_r2", "sigma_C", "CE",
+                   "catalog_triggers", "dist_saa_gap_s", "nearest_crupi", "nearest_crupi_dt_h"] + [c for c in extra if c in lonely.columns]
     lonely[lonely_cols].to_csv(out / "events_without_counterpart.csv", index=False)
 
     # ---- sensitivity
@@ -398,6 +428,18 @@ def main() -> None:
         f"- Abbinati al catalogo trigger GBM: {int(ev['match_gbm'].sum())}; a Crupi noti: {int(ev['match_crupi_known'].sum())}; a Crupi inediti: {int(ev['match_crupi_unknown'].sum())}.",
         f"- Senza controparte (né GBM né Crupi): **{len(lonely)}** ({len(lonely) / max(len(rd.data_days), 1):.2f} al giorno su {len(rd.data_days)} giorni con dati). Non sono \"scoperte\": vedi `events_without_counterpart.csv`.",
         f"- Riferimento paper (fino al 9 luglio): {PAPER['events_total']} eventi (74 noti, 25 incerti, 1 falso).",
+        "",
+        "### Diagnosi per evento degli eventi senza controparte",
+        "",
+        (f"Distanza dal buco SAA più vicino: minima {lonely['dist_saa_gap_s'].min():.0f} s, mediana {lonely['dist_saa_gap_s'].median():.0f} s. "
+         f"Riferimento di Crupi più vicino entro 1 h: {int((lonely['nearest_crupi_dt_h'].abs() < 1).sum())}/{len(lonely)}. "
+         f"Tier: {lonely['CE'].value_counts().reindex(['R', 'S', 'P']).fillna(0).astype(int).to_dict()}; "
+         f"con il rivelatore nb: {int(lonely['detectors'].str.contains('nb').sum())}/{len(lonely)} "
+         f"(contro {int(ev.loc[ev['match_crupi_known'] | ev['match_crupi_unknown'], 'detectors'].str.contains('nb').sum())}/"
+         f"{int((ev['match_crupi_known'] | ev['match_crupi_unknown']).sum())} negli eventi abbinati a Crupi)."),
+        "",
+        md_table(lonely[[c for c in ["trig_ids", "start_times", "duration", "detectors", "sigma_C", "CE", "dist_saa_gap_s",
+                                     "nearest_crupi", "nearest_crupi_dt_h", "l", "lat_fermi", "predicted_class"] if c in lonely.columns]]),
         "",
         "## A. Catalogo trigger GBM",
         "",
