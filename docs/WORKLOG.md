@@ -100,3 +100,86 @@ Ogni voce: cosa è cambiato, perché, risultato misurato (valori reali dai file)
 - Importare `gbm.finder` apre già un socket FTP verso HEASARC (connessione a livello di classe nella libreria). "Idempotente" significa quindi: nessun file scaricato e nessuna richiesta per giorno, non zero connessioni.
 - `test_pipeline.py` usa ancora un proprio download sulla sandbox: non toccato (fuori ambito della Fase 1).
 - `ModelNN.prepare` usa ancora le etichette di mese (`end31`, M4 in DIFF_UPSTREAM): da allineare alle date in Fase 2.
+
+---
+
+## 2026-10-03 — Fase 2: correttezza del motore
+
+### Decisioni (delegate, registrate in docs/WORKING_RULES.md §2)
+Si segue il **codice upstream** dove differisce dal testo del paper: FOCuS sui rate, esclusione SAA ±150 bin, `t_max` = 50 bin. Verifiche a posteriori sui dati:
+- **rate:** S nostro / S di Crupi sugli eventi abbinati ha mediana 1.02 (r0) e 1.03 (r1). Con i conteggi sarebbe ≈ 2.02 → Crupi usava i rate.
+- **±150 bin:** troviamo **15** GRB del Burst Catalog senza dati, esattamente come il paper ("15 [...] due to the clipping"). Con ±150 s sarebbero circa 8 → la run di Crupi usava i 150 bin.
+- **`t_max`:** nessuna evidenza nei dati; il paper dichiara dmax = 120.4 s. Effetto misurato come sensibilità (vedi sotto).
+
+### Bug corretti (commit)
+- `caf9920` analyze: sigma per evento (tableize) ripristinate; segmenti con fine inclusa (le durate erano più corte di un bin); offset FOCuS; C e tier CE (regola verificata su 99/99 righe di Crupi).
+- `99e763f` model_nn: timestamp in **UTC** (erano TT, +69.184 s); bundle modello + scaler + metadati; ricetta di training upstream; seed; finestra di date; zeri a NaN in frg e bkg; nessuna sovrascrittura.
+- `255d549` trigger: input in sola lettura; celle non valide passate a FOCuS come NaN (reset delle curve).
+- `3ef1b64` pipeline: cache versionata `data/runs/<start>_<end>/engine-v2/`; via la sanificazione `fillna(10)` e la riscrittura di frg; parametri stampati e salvati in `manifest.json`; batch NN 2048.
+- `1dfb652` **catalogo trigger** (regressione nuova, trovata durante la run): il file rigenerato il 2 ottobre aveva intervalli `trigger_time + timescale` (16 ms–4 s) invece di `time`→`end_time` (circa −135/+480 s, upstream). Con il file sbagliato il training escludeva 8 righe invece di 20 682. Rigenerato da HEASARC: sui 143 trigger del periodo gli intervalli coincidono con upstream (differenza massima 0.0).
+- La prima run (con il catalogo sbagliato) è stata interrotta prima di qualunque predizione; bundle e manifest spostati in `data/_archive_20261003/aborted_engine_v2_run/`.
+
+### Modello
+- Riusato il modello del 2026-09-21, addestrato da codice equivalente a upstream (`b0b2802`) con gli iperparametri del paper (2048 unità, 64 epoche, batch 2048, lr 0.0008, dropout 0.02, split 52/23/25). **Nessun nuovo training.**
+- Scaler ricostruito con lo stesso split deterministico (`random_state=0`). Confronto con le predizioni originali su 69 393 528 celle non sovrascritte: differenza relativa mediana 2.5e-5, massima 5.7e-3 → stesso scaler.
+- Il modello originale di Crupi (2022) **non è disponibile** (nessun `.h5` nei branch upstream).
+
+### Run `engine-v2` (commit motore `1dfb652`, codice pulito)
+- 2 238 398 bin; 310 800 righe mascherate (1036 buchi × 300; prima erano 310 500: upstream lasciava scoperti i lati esterni del primo e dell'ultimo buco); 0 celle a zero.
+- FOCuS: picco 382.6σ; 3453 bin con r1 > 3σ su almeno un rivelatore.
+- 179 trigger → **144 eventi** (R 105, S 18, P 21); durata mediana 72.5 s.
+- `python -m benchmark.audit.engine_checks` → `results/engine_checks.md`: **SAA PASS** (nessun bin né confine di evento entro 150 s da un buco; il più vicino è a 622.6 s); **sigma PASS** (ricalcolo indipendente, differenza massima 2.3e-13).
+- Test: 58/58 OK (`python -m unittest discover -s tests -t .`).
+
+### Test
+I test ora sono tutti sulle funzioni reali. Quelli di `models/tests/` sono stati rimossi perché testavano copie. Ogni bug corretto ha un test che fallisce sul codice precedente (verificato con `git stash`): analyze, model_nn, trigger, catalogo, classificatore.
+
+---
+
+## 2026-10-03 — Fase 3: validazione (`python -m benchmark.validate` → `benchmark/out/REPORT.md`)
+
+### Regola di matching
+Uno-a-uno (assegnazione greedy per distanza). Un riferimento è abbinato se il suo istante cade in [inizio evento − 2 bin, fine evento + 2 bin]; l'inizio evento è il change point FOCuS (`start_times_offset`). I riferimenti senza tempo restano nell'output come non abbinati. Sensibilità con margini di 10 s, 60 s e 1200 s.
+
+### Risultati (run `engine-v2`, regola primaria)
+- **Crupi noti: 70/71** (R 62/62, S 3/3, P 5/6). Mancante: `2019_7` (GRB190311600, P, n8): FOCuS r1 massimo 2.82σ entro ±60 s, sotto soglia.
+- **Crupi inediti: 21/24** (R 12/13, S 3/3, P 6/8); R+S **15/16**. Mancanti:
+  - `2019_0` (P): 2.45σ, sotto soglia;
+  - `2019_58` (P): 2.97σ, sotto soglia;
+  - `2019_81` (R): **rivelato ma unito**. Il nostro evento 122 (1154 s) copre `2019_80`, `2019_81` e `2019_82`, che Crupi elenca separati in 13 minuti; con il matching uno-a-uno l'evento va a `2019_80` (inediti) e a `2019_82` (noti).
+- **Catalogo GBM** (143 trigger nei giorni con dati, 23 senza dati validi all'istante del trigger): rivelati 68/120. GRB del Burst Catalog: 93 nel periodo, **15 senza dati (paper: 15)**, rivelati **60/78** (paper 65/81 fino al 9/07); T90 > 4.096 s **54/65** (paper 60/68), T90 ≤ 4.096 s **6/13** (paper 5/13). TGF 0/23 e UNCERT 0/11: attesi con bin da 4 s.
+- **S nostro / S di Crupi** (mediana): r0 1.02, r1 1.03, r2 0.76.
+- Sensibilità: con 60 s GRB 63/78, con 1200 s 64/78; Crupi noti 70/71 con tutti i margini; inediti 22/24 solo a 1200 s.
+- **Casi del §1:**
+  - GRB190525032: abbinato (l'evento inizia 3.4 s prima del trigger).
+  - GRB190308923: rivelato, ma il nostro evento inizia 25 s dopo il trigger. Fuori dal margine di 2 bin, abbinato con 60 s.
+  - Nessuno dei due è nelle tabelle di Crupi. Non erano "scoperte".
+  - L'ipotesi "trigger time NaN nel join" non è verificabile: il report che li presentava come scoperte era scritto a mano.
+
+### Numero di eventi: 144 contro ~100 (criterio non raggiunto, diagnosi)
+- 91 eventi abbinati a Crupi. 53 senza controparte né GBM né Crupi, di cui 1 (evento 7) dentro l'intervallo di catalogo di GRB190308923.
+- Escluso:
+  - **unità** (S ≈ quello di Crupi);
+  - **clustering** (stesso codice upstream, merge 600 s);
+  - **SAA** (nessun evento entro 150 s; distanza minima 672 s, mediana 5218 s);
+  - **t_max**: con dmax = 120.4 s (29 bin) si ottengono 180 trigger → 144 eventi, stessi numeri di validazione;
+  - **segmentazione**: solo 6/53 hanno un evento di Crupi entro 1 h.
+- Contesto orbitale non anomalo (L mediano 1.12 contro 1.18 negli eventi abbinati).
+- Il rivelatore `nb` compare in 45/53 di questi eventi contro 49/90 in quelli abbinati, ma i residui di `nb_r1` non sono distorti più degli altri canali (mediana +0.16%).
+- **Causa più probabile:** la realizzazione della rete. La nostra rete ripete la ricetta di Crupi ma non è la sua (il modello originale non è disponibile), e i residui locali in alcune condizioni orbitali cambiano tra realizzazioni.
+- Per confermarlo serve il test di stabilità su ≥ 2 seed (nuovi training): **non eseguito, richiede conferma**.
+
+## 2026-10-03 — Fase 4: classificazione (`python -m benchmark.classify`)
+- Leakage rimosso; `tests/test_classifier.py` verifica che le colonne del catalogo non cambino `predicted_class` (il test fallisce sul codice vecchio).
+- Localizzazione: 144/144 eventi; deterministica (seriale = parallela, differenza 0.0).
+- Su 91 eventi abbinati: **80/91 (87.9%)** con classe compatibile con quella tentativa di Crupi.
+  - GRB: precision 0.91, recall 0.97.
+  - SF: 5/5.
+  - UNC(LP): recall 0.30 (5 classificati GRB).
+  - TGF: 0/2.
+- Limiti documentati: `fe_wet`/`fe_skw` costanti (la condizione `fe_wet > 2.054` della regola GRB è sempre vera); regola TGF irraggiungibile.
+
+## 2026-10-03 — Fase 5: consegna
+- `docs/BASELINE.md`: comandi, tempi misurati, formato della cache, come lanciare un altro periodo (`DEEPGRB_START_DATE`/`DEEPGRB_END_DATE`; training solo con `DEEPGRB_ALLOW_TRAINING=1`).
+- Riproducibilità: rieseguendo `benchmark.validate` le tabelle CSV sono identiche byte per byte.
+- Tag `baseline-2019-validated`: **non creato**. I criteri di recall sono raggiunti, quello sul numero di eventi no (diagnosticato sopra): la decisione spetta a Giovanni.
