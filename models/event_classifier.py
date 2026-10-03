@@ -6,9 +6,18 @@ hardness ratios, Sun/Earth angular distances, SAA/pole proximity, galactic
 latitude, duration, detector counts). Catalog columns are never read here; they
 are used only by the validation (benchmark/validate.py).
 
-Known limits (documented, not tuned): the wavelet features fe_wet/fe_skw are not
-computed (constant defaults, so the 'fe_wet > 2.054' GRB condition is always true),
-and the TGF rule (duration < 0.2 s) cannot fire with 4.096 s bins.
+Provenance: the rules are Crupi's "manual classification logic" in
+upstream pipeline/script_classification2.py (2023). Their thresholds were read from
+one-vs-rest decision trees (depth 3) and refined by hand on the labelled catalog of
+2010-11, 2014 and 2019; random forests (with L1 feature selection and Anchor
+explanations) were used there to study feature importance, not as the classifier.
+
+Rules transcribed here: SF, TGF, GF, UNC(LP), GRB. Not available: the FP rule and the
+light-curve features fe_* (wavelet entropy, skewness, ...) computed with tsfel in the
+upstream branch ric_review_28062023. Without them the terms 'fe_wet > 2.054' (GRB) and
+'fe_skw <= 0.345' (UNC(LP)) are neutral (defaults 2.1 and 0.0 make them always true).
+Crupi evaluated each rule one-vs-rest; the single label below (priority GRB, TGF, SF,
+UNC(LP), GF, UNC) is our convention.
 """
 
 import logging
@@ -40,17 +49,12 @@ class CrupiEventClassifier:
 
         cols_direct = [
             "sigma_r0", "sigma_r1", "sigma_r2", "duration",
-            "ra", "dec", "ra_earth", "dec_earth",
+            "ra", "dec", "ra_std", "dec_std", "ra_earth", "dec_earth",
             "ra_sun", "dec_sun", "b_galactic", "lat_fermi", "lon_fermi", "l"
         ]
         for c in cols_direct:
             X[c] = df[c] if c in df.columns else 0.0
-        X["earth_vis"] = df["earth_vis"] if "earth_vis" in df.columns else 1.0
-        if "diff_earth" not in X.columns or (X["diff_earth"] == 0).all():
-            X["diff_earth"] = 180.0
-        X["earth_vis"] = df["earth_vis"] if "earth_vis" in df.columns else 1.0
-        if "diff_earth" not in X.columns or X["diff_earth"].sum() == 0:
-            X["diff_earth"] = 180.0
+        X["earth_vis"] = df["earth_vis"].astype(float) if "earth_vis" in df.columns else 1.0
 
         X = X.fillna(0.0)
 
@@ -123,7 +127,8 @@ class CrupiEventClassifier:
         # Heuristic rules
         earth_vis_safe = X["earth_vis"].astype(float).fillna(1.0)
         y_pred["SF"] = (X["HR10"] <= 0.392) & (X["diff_sun"] < 63.49)
-        y_pred["TGF"] = (earth_vis_safe < 0.5) & (X["diff_earth"] < 60.0) & (df["duration"] < 0.2)
+        # Crupi: (1 - earth_vis) | (diff_earth < 80)
+        y_pred["TGF"] = (earth_vis_safe < 0.5) | (X["diff_earth"] < 80.0)
         y_pred["GF"] = (np.abs(X["b_galactic"]) < 10.0) & (earth_vis_safe > 0.5)
         y_pred["UNC(LP)"] = (
             (
@@ -132,7 +137,9 @@ class CrupiEventClassifier:
                 ((X["dist_polo_sud_lon"] <= 19.0) & (X["dist_polo_sud_lat"] <= 7.6))
             ) &
             ((X["num_det"] >= 9) | (X["fe_skw"] <= 0.345)) &
-            (X["diff_sun"] > 35.0)
+            # Crupi: (diff_sun > 35) | (max(ra_std, dec_std) > 100) with ra_std/dec_std holding the
+            # localization *variance* (deg^2) in his tables; 100 deg^2 -> 10 deg standard deviation.
+            ((X["diff_sun"] > 35.0) | (np.maximum(X["ra_std"], X["dec_std"]) > 10.0))
         )
         y_pred["GRB"] = (X["HR10"] > 0.449) & (X["HR21"] <= 0.375) & (X["fe_wet"] > 2.054)
         y_pred["UNC"] = 1 - (y_pred["SF"] | y_pred["TGF"] | y_pred["GF"] | y_pred["UNC(LP)"] | y_pred["GRB"])

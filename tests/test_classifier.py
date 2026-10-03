@@ -48,3 +48,35 @@ class TestNoLeakage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRulesMatchCrupi(unittest.TestCase):
+    """Rule flags must equal Crupi's classification_logic (upstream script_classification2.py)."""
+
+    def test_flags_equal_transcription(self):
+        df = events()
+        df["ra_std"] = np.random.default_rng(2).uniform(0, 40, len(df))
+        df["dec_std"] = np.random.default_rng(3).uniform(0, 40, len(df))
+        clf = CrupiEventClassifier(df)
+        X = clf.prepare_features()
+        y = clf.apply_classification_logic()
+        ev = X["earth_vis"].astype(bool)
+        expected = {
+            "SF": (X["HR10"] <= 0.392) & (X["diff_sun"] < 63.49),
+            "TGF": (~ev) | (X["diff_earth"] < 80),
+            "GF": (X["b_galactic"].abs() < 10) & ev,
+            "UNC(LP)": ((((X["dist_saa_lon"] <= 9) & (X["dist_saa_lat"] <= 3.6))
+                         | ((X["dist_polo_nord_lon"] <= 19) & (X["dist_polo_nord_lat"] <= 7.6))
+                         | ((X["dist_polo_sud_lon"] <= 19) & (X["dist_polo_sud_lat"] <= 7.6)))
+                        & ((X["num_det"] >= 9) | (X["fe_skw"] <= 0.345))
+                        # Crupi's threshold 100 applied to the variance -> 10 deg on the standard deviation
+                        & ((X["diff_sun"] > 35) | (np.maximum(X["ra_std"] ** 2, X["dec_std"] ** 2) > 100))),
+            "GRB": (X["HR10"] > 0.449) & (X["HR21"] <= 0.375) & (X["fe_wet"] > 2.054),
+        }
+        for label, exp in expected.items():
+            pd.testing.assert_series_equal(y[label].astype(bool), exp.astype(bool), check_names=False, obj=label)
+
+    def test_tgf_rule_can_fire(self):
+        df = events()
+        df["earth_vis"] = False
+        self.assertTrue(CrupiEventClassifier(df).apply_classification_logic()["TGF"].all())
