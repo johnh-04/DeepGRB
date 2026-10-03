@@ -1,349 +1,132 @@
-import pandas as pd
+"""
+Batch figure production script for publications and diagnostics.
+Generates orbit-downsampled comparisons, residual trends, and GRB lightcurves.
+"""
+
+import logging
+from pathlib import Path
+from typing import Optional
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import seaborn as sns
 
-PATH_TO_FOLD = "/beegfs/rcrupi/pred"
-PATH_TO_SAVE = "/home/rcrupi/Downloads/"
-col_range = ['n0_r0', 'n0_r1', 'n0_r2', 'n1_r0', 'n1_r1', 'n1_r2', 'n2_r0',
-                          'n2_r1', 'n2_r2', 'n3_r0', 'n3_r1', 'n3_r2', 'n4_r0', 'n4_r1', 'n4_r2',
-                          'n5_r0', 'n5_r1', 'n5_r2', 'n6_r0', 'n6_r1', 'n6_r2', 'n7_r0', 'n7_r1',
-                          'n7_r2', 'n8_r0', 'n8_r1', 'n8_r2', 'n9_r0', 'n9_r1', 'n9_r2', 'na_r0',
-                          'na_r1', 'na_r2', 'nb_r0', 'nb_r1', 'nb_r2']
+from connections.utils.config import DATA_DIR, FOLD_PRED
+
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 
-# # # n4_r1_2019_05_21.png \label{fig:residual}
-start_month = "01-2019"
-end_month = "07-2019"
-orbit_bin = None
-det_rng = 'n4_r1'
+def generate_publication_plots(output_dir: Optional[Path] = None) -> None:
+    """Generates benchmark plots matching the DeepGRB paper figures."""
+    save_path = output_dir or (DATA_DIR / "plots" / "paper_figures")
+    save_path.mkdir(parents=True, exist_ok=True)
+    pred_path = DATA_DIR / FOLD_PRED
 
-# Plot a particular zone and det_rng
-df_ori = pd.read_csv(PATH_TO_FOLD + "/" + 'frg_' + start_month + '_' + end_month + '_MAE' + '.csv')
-y_pred = pd.read_csv(PATH_TO_FOLD + "/" + 'bkg_' + start_month + '_' + end_month + '_MAE' + '.csv')
+    # 1. Figure: Daily Residual Profile (2019-05-21)
+    file_frg_19 = pred_path / "frg_01-2019_07-2019_MAE.csv"
+    file_bkg_19 = pred_path / "bkg_01-2019_07-2019_MAE.csv"
 
-time_r_min = '2019-05-21 00:00:00'
-time_r_max = '2019-05-22 00:00:00'
-time_r = df_ori[
-    (pd.to_datetime(df_ori.timestamp) >= pd.to_datetime(time_r_min)) &
-    (pd.to_datetime(df_ori.timestamp) < pd.to_datetime(time_r_max))
-].index
+    # Fallback to standard names if MAE suffix is absent
+    if not file_frg_19.exists():
+        file_frg_19 = pred_path / "frg_03-2019_07-2019.csv"
+        file_bkg_19 = pred_path / "bkg_03-2019_07-2019.csv"
 
-# Plot frg, bkg and residual for det_rng
-with sns.plotting_context("talk"):
-    fig, axs = plt.subplots(2, 1, sharex=True, figsize=(24, 12))
-    # Remove horizontal space between axes
-    fig.subplots_adjust(hspace=0)
-    fig.suptitle(det_rng + " " + str(pd.to_datetime(df_ori.loc[time_r, 'timestamp']).iloc[0]))
+    if file_frg_19.exists() and file_bkg_19.exists():
+        logging.info("Generating Figure 1: Daily residual profile...")
+        df_ori = pd.read_csv(file_frg_19)
+        y_pred = pd.read_csv(file_bkg_19)
+        df_ori["dt"] = pd.to_datetime(df_ori["timestamp"])
 
-    # Plot each graph, and manually set the y tick values
-    axs[0].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']), df_ori.loc[time_r, det_rng], 'k-.')
-    axs[0].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']), y_pred.loc[time_r, det_rng], 'r-')
+        mask = (df_ori["dt"] >= "2019-05-21 00:00:00") & (df_ori["dt"] < "2019-05-22 00:00:00")
+        sub_frg = df_ori.loc[mask]
+        sub_bkg = y_pred.loc[mask]
 
-    # axs[0].set_yticks(np.arange(-0.9, 1.0, 0.4))
-    # axs[0].set_ylim(-1, 1)
-    axs[0].set_title('foreground and background')
-    axs[0].set_xlabel('time')
-    axs[0].set_ylabel('Count Rate')
+        if not sub_frg.empty:
+            det_rng = "n4_r1"
+            with sns.plotting_context("talk"):
+                fig, axs = plt.subplots(2, 1, sharex=True, figsize=(18, 9))
+                fig.subplots_adjust(hspace=0)
+                fig.suptitle(f"{det_rng} - 2019-05-21")
 
-    axs[1].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']),
-                df_ori.loc[time_r, det_rng] - y_pred.loc[time_r, det_rng], 'k-.')
-    axs[1].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']).fillna(method='ffill'),
-                df_ori.loc[time_r, 'met'].fillna(0) * 0, 'k-')
-    # axs[1].set_yticks(np.arange(0.1, 1.0, 0.2))
-    # axs[1].set_ylim(0, 1)
-    axs[1].set_xlabel('time (month-day hour)')
-    axs[1].set_ylabel('Residuals')
-plt.savefig(PATH_TO_SAVE + 'n4_r1_2019_05_21.png')
+                axs[0].plot(sub_frg["dt"], sub_frg[det_rng], "k-.", label="Observed")
+                axs[0].plot(sub_frg["dt"], sub_bkg[det_rng], "r-", label="Predicted Bkg")
+                axs[0].set_ylabel("Count Rate")
+                axs[0].legend(loc="upper right")
+                axs[0].grid(True, linestyle="--", alpha=0.5)
 
-# # # bkg_est.png \label{fig:bkg_est}
-# Plot y_pred vs y_true
-with sns.plotting_context("talk"):
-    fig = plt.figure()
-    fig.set_size_inches(16, 10)
-    plt.plot(df_ori.loc[:, ['n4_r0', 'n4_r1', 'n4_r2']], y_pred.loc[:,  ['n4_r0', 'n4_r1', 'n4_r2']], '.', alpha=0.2)
-    plt.plot([0, 600], [0, 600], '-')
-    plt.xlim([0, 600])
-    plt.ylim([0, 600])
-    plt.xlabel('True signal')
-    plt.ylabel('Predicted signal')
-    plt.legend(['n4_r0', 'n4_r1', 'n4_r2'])
-plt.savefig(PATH_TO_SAVE + 'bkg_est.png')
+                axs[1].plot(sub_frg["dt"], sub_frg[det_rng] - sub_bkg[det_rng], "k-.")
+                axs[1].axhline(0, color="gray", linestyle="-", linewidth=0.8)
+                axs[1].set_xlabel("Time (UTC)")
+                axs[1].set_ylabel("Residuals")
+                axs[1].grid(True, linestyle="--", alpha=0.5)
+
+                fig.savefig(save_path / "n4_r1_2019_05_21.png", dpi=150, bbox_inches="tight")
+                plt.close(fig)
+
+            # Scatter y_pred vs y_true
+            with sns.plotting_context("talk"):
+                fig, ax = plt.subplots(figsize=(10, 8))
+                for ch in ["n4_r0", "n4_r1", "n4_r2"]:
+                    ax.scatter(sub_frg[ch], sub_bkg[ch], s=10, alpha=0.3, label=ch)
+                ax.plot([0, 600], [0, 600], "k--", label="Ideal 1:1")
+                ax.set_xlim([0, 600])
+                ax.set_ylim([0, 600])
+                ax.set_xlabel("Observed Signal")
+                ax.set_ylabel("Predicted Background")
+                ax.legend()
+                ax.grid(True, linestyle="--", alpha=0.5)
+                fig.savefig(save_path / "bkg_est.png", dpi=150, bbox_inches="tight")
+                plt.close(fig)
+
+    # 2. Figure: Orbit-Averaged Downsampled Lightcurves (Solar Minimum / Maximum)
+    for epoch_label, start_m, end_m in [("solarmin_2020", "01-2020", "01-2021"), ("solarmax_2014", "01-2014", "01-2015")]:
+        f_frg = pred_path / f"frg_{start_m}_{end_m}.csv"
+        f_bkg = pred_path / f"bkg_{start_m}_{end_m}.csv"
+
+        if not f_frg.exists() or not f_bkg.exists():
+            continue
+
+        logging.info(f"Generating orbit-averaged plots for {epoch_label}...")
+        df_f = pd.read_csv(f_frg)
+        df_b = pd.read_csv(f_bkg)
+
+        for orbit_bin in [1, 16]:
+            orbit_seconds = 96.0 * orbit_bin * 60.0
+            group_key = df_f["met"] // orbit_seconds
+
+            df_f_down = df_f.groupby(group_key).mean(numeric_only=True)
+            df_b_down = df_b.groupby(group_key).mean(numeric_only=True)
+            ts_down = df_f["timestamp"].groupby(group_key).first()
+
+            det_target = "n5_r0"
+            if det_target not in df_f_down.columns:
+                continue
+
+            with sns.plotting_context("talk"):
+                fig, axs = plt.subplots(2, 1, sharex=True, figsize=(18, 9))
+                fig.subplots_adjust(hspace=0)
+                fig.suptitle(f"{det_target} - {epoch_label} (Orbit bin: {orbit_bin})")
+
+                x_axis = pd.to_datetime(ts_down)
+                axs[0].plot(x_axis, df_f_down[det_target], "k-.", label="Observed (Averaged)")
+                axs[0].plot(x_axis, df_b_down[det_target], "r-", label="Predicted (Averaged)")
+                axs[0].set_ylabel("Count Rate")
+                axs[0].legend(loc="upper right")
+                axs[0].grid(True, linestyle="--", alpha=0.5)
+
+                axs[1].plot(x_axis, df_f_down[det_target] - df_b_down[det_target], "k-.")
+                axs[1].axhline(0, color="gray", linestyle="-", linewidth=0.8)
+                axs[1].set_xlabel("Date")
+                axs[1].set_ylabel("Residuals")
+                axs[1].grid(True, linestyle="--", alpha=0.5)
+
+                fig.savefig(save_path / f"{det_target}_{epoch_label}_orbit_{orbit_bin}.png", dpi=150, bbox_inches="tight")
+                plt.close(fig)
+
+    logging.info(f"All available figures successfully exported to: {save_path}")
 
 
-# # # n5_r0_2020_orbit_1.png \label{fig:solarmin2020_orbit1}
-start_month = "01-2020"
-end_month = "01-2021"
-orbit_bin = 1
-det_rng = 'n5_r0'
-
-# Plot a particular zone and det_rng
-df_ori = pd.read_csv(PATH_TO_FOLD + "/" + 'frg_' + start_month + '_' + end_month + '.csv')
-y_pred = pd.read_csv(PATH_TO_FOLD + "/" + 'bkg_' + start_month + '_' + end_month + '.csv')
-
-time_r = df_ori.index
-
-# # Drop na for average counts
-# df_ori = df_ori.dropna(axis=0)
-# y_pred = y_pred.dropna(axis=0)
-# Downsample the signals averaging by orbit_bin orbit slots. 96.5*60s are the seconds of orbit.
-df_ori_downsample = df_ori.groupby(df_ori.met // (96 * orbit_bin * 60)).mean()
-df_ori_downsample['timestamp'] = df_ori['timestamp'].groupby(df_ori.met // (96 * orbit_bin * 60)).first()
-y_pred_downsample = y_pred.groupby(df_ori.met // (96 * orbit_bin * 60)).mean()
-y_pred_downsample['timestamp'] = df_ori_downsample['timestamp']
-
-df_ori = df_ori_downsample
-y_pred = y_pred_downsample
-time_r = df_ori.index
-
-# Plot frg, bkg and residual for det_rng
-with sns.plotting_context("talk"):
-    fig, axs = plt.subplots(2, 1, sharex=True, figsize=(24, 12))
-    # Remove horizontal space between axes
-    fig.subplots_adjust(hspace=0)
-    fig.suptitle(det_rng + " " + str(pd.to_datetime(df_ori.loc[time_r, 'timestamp']).iloc[0]))
-
-    # Plot each graph, and manually set the y tick values
-    axs[0].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']), df_ori.loc[time_r, det_rng], 'k-.')
-    axs[0].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']), y_pred.loc[time_r, det_rng], 'r-')
-
-    # axs[0].set_yticks(np.arange(-0.9, 1.0, 0.4))
-    # axs[0].set_ylim(-1, 1)
-    axs[0].set_title('foreground and background')
-    axs[0].set_xlabel('time')
-    axs[0].set_ylabel('Count Rate')
-
-    axs[1].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']),
-                df_ori.loc[time_r, det_rng] - y_pred.loc[time_r, det_rng], 'k-.')
-    axs[1].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']).fillna(method='ffill'),
-                df_ori.loc[time_r, 'met'].fillna(0) * 0, 'k-')
-    # axs[1].set_yticks(np.arange(0.1, 1.0, 0.2))
-    # axs[1].set_ylim(0, 1)
-    axs[1].set_xlabel('time (year-month)')
-    axs[1].set_ylabel('Residuals')
-plt.savefig(PATH_TO_SAVE + 'n5_r0_2020_orbit_1.png')
-
-# # # n5_r0_2020_orbit16.png \label{fig:solarmin2020_orbit16}
-start_month = "01-2020"
-end_month = "01-2021"
-orbit_bin = 16
-det_rng = 'n5_r0'
-
-# Plot a particular zone and det_rng
-df_ori = pd.read_csv(PATH_TO_FOLD + "/" + 'frg_' + start_month + '_' + end_month + '.csv')
-y_pred = pd.read_csv(PATH_TO_FOLD + "/" + 'bkg_' + start_month + '_' + end_month + '.csv')
-
-time_r = df_ori.index
-
-# # Drop na for average counts
-# df_ori = df_ori.dropna(axis=0)
-# y_pred = y_pred.dropna(axis=0)
-# Downsample the signals averaging by orbit_bin orbit slots. 96.5*60s are the seconds of orbit.
-df_ori_downsample = df_ori.groupby(df_ori.met // (96 * orbit_bin * 60)).mean()
-df_ori_downsample['timestamp'] = df_ori['timestamp'].groupby(df_ori.met // (96 * orbit_bin * 60)).first()
-y_pred_downsample = y_pred.groupby(df_ori.met // (96 * orbit_bin * 60)).mean()
-y_pred_downsample['timestamp'] = df_ori_downsample['timestamp']
-
-df_ori = df_ori_downsample
-y_pred = y_pred_downsample
-time_r = df_ori.index
-
-# Plot frg, bkg and residual for det_rng
-with sns.plotting_context("talk"):
-    fig, axs = plt.subplots(2, 1, sharex=True, figsize=(24, 12))
-    # Remove horizontal space between axes
-    fig.subplots_adjust(hspace=0)
-    fig.suptitle(det_rng + " " + str(pd.to_datetime(df_ori.loc[time_r, 'timestamp']).iloc[0]))
-
-    # Plot each graph, and manually set the y tick values
-    axs[0].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']), df_ori.loc[time_r, det_rng], 'k-.')
-    axs[0].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']), y_pred.loc[time_r, det_rng], 'r-')
-
-    # axs[0].set_yticks(np.arange(-0.9, 1.0, 0.4))
-    # axs[0].set_ylim(-1, 1)
-    axs[0].set_title('foreground and background')
-    axs[0].set_xlabel('time')
-    axs[0].set_ylabel('Count Rate')
-
-    axs[1].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']),
-                df_ori.loc[time_r, det_rng] - y_pred.loc[time_r, det_rng], 'k-.')
-    axs[1].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']).fillna(method='ffill'),
-                df_ori.loc[time_r, 'met'].fillna(0) * 0, 'k-')
-    # axs[1].set_yticks(np.arange(0.1, 1.0, 0.2))
-    # axs[1].set_ylim(0, 1)
-    axs[1].set_xlabel('time (year-month)')
-    axs[1].set_ylabel('Residuals')
-plt.savefig(PATH_TO_SAVE + 'n5_r0_2020_orbit16.png')
-
-# # # n5_r0_2014_orbit_1_zoom.png \label{fig:solarmaxzoom2014_orbit1}
-start_month = "01-2014"
-end_month = "01-2015"
-orbit_bin = 1
-det_rng = 'n5_r0'
-
-# Plot a particular zone and det_rng
-df_ori = pd.read_csv(PATH_TO_FOLD + "/" + 'frg_' + start_month + '_' + end_month + '.csv')
-y_pred = pd.read_csv(PATH_TO_FOLD + "/" + 'bkg_' + start_month + '_' + end_month + '.csv')
-
-time_r = df_ori.index
-
-# # Drop na for average counts
-# df_ori = df_ori.dropna(axis=0)
-# y_pred = y_pred.dropna(axis=0)
-# Downsample the signals averaging by orbit_bin orbit slots. 96.5*60s are the seconds of orbit.
-df_ori_downsample = df_ori.groupby(df_ori.met // (96 * orbit_bin * 60)).mean()
-df_ori_downsample['timestamp'] = df_ori['timestamp'].groupby(df_ori.met // (96 * orbit_bin * 60)).first()
-y_pred_downsample = y_pred.groupby(df_ori.met // (96 * orbit_bin * 60)).mean()
-y_pred_downsample['timestamp'] = df_ori_downsample['timestamp']
-
-df_ori = df_ori_downsample
-y_pred = y_pred_downsample
-time_r = df_ori.index
-
-# Plot frg, bkg and residual for det_rng
-with sns.plotting_context("talk"):
-    fig, axs = plt.subplots(2, 1, sharex=True, figsize=(24, 12))
-    # Remove horizontal space between axes
-    fig.subplots_adjust(hspace=0)
-    fig.suptitle(det_rng + " " + str(pd.to_datetime(df_ori.loc[time_r, 'timestamp']).iloc[0]))
-
-    # Plot each graph, and manually set the y tick values
-    axs[0].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']), df_ori.loc[time_r, det_rng], 'k-.')
-    axs[0].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']), y_pred.loc[time_r, det_rng], 'r-')
-
-    # axs[0].set_yticks(np.arange(-0.9, 1.0, 0.4))
-    axs[0].set_ylim(130, 350)
-    axs[0].set_title('foreground and background')
-    axs[0].set_xlabel('time')
-    axs[0].set_ylabel('Count Rate')
-
-    axs[1].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']),
-                df_ori.loc[time_r, det_rng] - y_pred.loc[time_r, det_rng], 'k-.')
-    axs[1].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']).fillna(method='ffill'),
-                df_ori.loc[time_r, 'met'].fillna(0) * 0, 'k-')
-    # axs[1].set_yticks(np.arange(0.1, 1.0, 0.2))
-    axs[1].set_ylim(-15, 100)
-    axs[1].set_xlabel('time (year-month)')
-    axs[1].set_ylabel('Residuals')
-plt.savefig(PATH_TO_SAVE + 'n5_r0_2014_orbit_1_zoom.png')
-
-# # # n5_r0_2014_orbit_1.png \label{fig:solarmax2014_orbit1}
-# Plot frg, bkg and residual for det_rng
-with sns.plotting_context("talk"):
-    fig, axs = plt.subplots(2, 1, sharex=True, figsize=(24, 12))
-    # Remove horizontal space between axes
-    fig.subplots_adjust(hspace=0)
-    fig.suptitle(det_rng + " " + str(pd.to_datetime(df_ori.loc[time_r, 'timestamp']).iloc[0]))
-
-    # Plot each graph, and manually set the y tick values
-    axs[0].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']), df_ori.loc[time_r, det_rng], 'k-.')
-    axs[0].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']), y_pred.loc[time_r, det_rng], 'r-')
-
-    # axs[0].set_yticks(np.arange(-0.9, 1.0, 0.4))
-    # axs[0].set_ylim(-1, 1)
-    axs[0].set_title('foreground and background')
-    axs[0].set_xlabel('time')
-    axs[0].set_ylabel('Count Rate')
-
-    axs[1].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']),
-                df_ori.loc[time_r, det_rng] - y_pred.loc[time_r, det_rng], 'k-.')
-    axs[1].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']).fillna(method='ffill'),
-                df_ori.loc[time_r, 'met'].fillna(0) * 0, 'k-')
-    # axs[1].set_yticks(np.arange(0.1, 1.0, 0.2))
-    # axs[1].set_ylim(0, 1)
-    axs[1].set_xlabel('time (year-month)')
-    axs[1].set_ylabel('Residuals')
-plt.savefig(PATH_TO_SAVE + 'n5_r0_2014_orbit_1.png')
-
-# # # n5_r0_2014_orbit16.png \label{fig:solarmmaxzoom2014_orbit16}
-start_month = "01-2014"
-end_month = "01-2015"
-orbit_bin = 16
-det_rng = 'n5_r0'
-
-# Plot a particular zone and det_rng
-df_ori = pd.read_csv(PATH_TO_FOLD + "/" + 'frg_' + start_month + '_' + end_month + '.csv')
-y_pred = pd.read_csv(PATH_TO_FOLD + "/" + 'bkg_' + start_month + '_' + end_month + '.csv')
-
-time_r = df_ori.index
-
-# # Drop na for average counts
-# df_ori = df_ori.dropna(axis=0)
-# y_pred = y_pred.dropna(axis=0)
-# Downsample the signals averaging by orbit_bin orbit slots. 96.5*60s are the seconds of orbit.
-df_ori_downsample = df_ori.groupby(df_ori.met // (96 * orbit_bin * 60)).mean()
-df_ori_downsample['timestamp'] = df_ori['timestamp'].groupby(df_ori.met // (96 * orbit_bin * 60)).first()
-y_pred_downsample = y_pred.groupby(df_ori.met // (96 * orbit_bin * 60)).mean()
-y_pred_downsample['timestamp'] = df_ori_downsample['timestamp']
-
-df_ori = df_ori_downsample
-y_pred = y_pred_downsample
-time_r = df_ori.index
-
-# Plot frg, bkg and residual for det_rng
-with sns.plotting_context("talk"):
-    fig, axs = plt.subplots(2, 1, sharex=True, figsize=(24, 12))
-    # Remove horizontal space between axes
-    fig.subplots_adjust(hspace=0)
-    fig.suptitle(det_rng + " " + str(pd.to_datetime(df_ori.loc[time_r, 'timestamp']).iloc[0]))
-
-    # Plot each graph, and manually set the y tick values
-    axs[0].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']), df_ori.loc[time_r, det_rng], 'k-.')
-    axs[0].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']), y_pred.loc[time_r, det_rng], 'r-')
-
-    # axs[0].set_yticks(np.arange(-0.9, 1.0, 0.4))
-    axs[0].set_ylim(180, 260)
-    axs[0].set_title('foreground and background')
-    axs[0].set_xlabel('time')
-    axs[0].set_ylabel('Count Rate')
-
-    axs[1].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']),
-                df_ori.loc[time_r, det_rng] - y_pred.loc[time_r, det_rng], 'k-.')
-    axs[1].plot(pd.to_datetime(df_ori.loc[time_r, 'timestamp']).fillna(method='ffill'),
-                df_ori.loc[time_r, 'met'].fillna(0) * 0, 'k-')
-    # axs[1].set_yticks(np.arange(0.1, 1.0, 0.2))
-    axs[1].set_ylim(-5, 22)
-    axs[1].set_xlabel('time (year-month)')
-    axs[1].set_ylabel('Residuals')
-plt.savefig(PATH_TO_SAVE + 'n5_r0_2014_orbit16.png')
-
-# # # GRB 091024
-start_month = "09-2009"
-end_month = "12-2009"
-orbit_bin = None
-
-# Plot a particular zone and det_rng
-df_ori = pd.read_csv(PATH_TO_FOLD + "/" + 'frg_' + start_month + '_' + end_month + '.csv')
-y_pred = pd.read_csv(PATH_TO_FOLD + "/" + 'bkg_' + start_month + '_' + end_month + '.csv')
-
-for det_rng in ['n0_r0', 'n0_r1', 'n0_r2', 'n6_r0', 'n6_r1', 'n6_r2', 'n8_r0', 'n8_r1', 'n8_r2']:
-
-    time_r_min = 278065500
-    time_r_max = 278071000
-    time_r = df_ori[(df_ori.met >= time_r_min) & (df_ori.met < time_r_max)].index
-
-    # Plot frg, bkg and residual for det_rng
-    with sns.plotting_context("talk"):
-        fig, axs = plt.subplots(2, 1, sharex=True, figsize=(12, 8))
-        # Remove horizontal space between axes
-        fig.subplots_adjust(hspace=0)
-        fig.suptitle(det_rng + " " + str(pd.to_datetime(df_ori.loc[time_r, 'timestamp']).iloc[0]))
-
-        # Plot each graph, and manually set the y tick values
-        axs[0].plot(df_ori.loc[time_r, 'met'], df_ori.loc[time_r, det_rng], 'k-.')
-        axs[0].plot(df_ori.loc[time_r, 'met'], y_pred.loc[time_r, det_rng], 'r-')
-
-        # axs[0].set_yticks(np.arange(-0.9, 1.0, 0.4))
-        # axs[0].set_ylim(180, 260)
-        axs[0].set_title('foreground and background')
-        axs[0].set_xlabel('time')
-        axs[0].set_ylabel('Count Rate')
-
-        axs[1].plot(df_ori.loc[time_r, 'met'],
-                    df_ori.loc[time_r, det_rng] - y_pred.loc[time_r, det_rng], 'k-.')
-        axs[1].plot(df_ori.loc[time_r, 'met'].fillna(method='ffill'),
-                    df_ori.loc[time_r, 'met'].fillna(0) * 0, 'k-')
-        # axs[1].set_yticks(np.arange(0.1, 1.0, 0.2))
-        # axs[1].set_ylim(-5, 22)
-        axs[1].set_xlabel('met')
-        axs[1].set_ylabel('Residuals')
-        plt.savefig(PATH_TO_SAVE + det_rng + '.png')
+if __name__ == "__main__":
+    generate_publication_plots()

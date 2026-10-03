@@ -1,159 +1,182 @@
-# import modules
-import os
+"""
+SQLite catalogue updater script.
+Iterates over unlocalized trigger records, computes PSO positions,
+and updates the local SQLite database safely via parametrized queries.
+"""
+
+import logging
+from pathlib import Path
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-from models.loc.localization_class import localization
-from sqlalchemy import create_engine
-# Fermi SkyPlot
-from gbm.data import HealPix
-from gbm.data import PosHist
-from gbm.plot import SkyPlot
+from sqlalchemy import create_engine, text
+
+from gbm.data import HealPix, PosHist
 from gbm.finder import ContinuousFtp
-# Project variables
-from connections.utils.config import PATH_TO_SAVE
+from gbm.plot import SkyPlot
 
-PATH_PRED = PATH_TO_SAVE + "pred/"
-PATH_BKG = PATH_TO_SAVE + "bkg/"
-if 'loc' not in os.listdir(PATH_PRED):
-    os.mkdir(PATH_PRED + 'loc')
+from connections.utils.config import DATA_DIR, FOLD_BKG, FOLD_PRED
+from models.loc.localization_class import Localization
 
-# Load catalogue of triggered events
-if 'CATdatabase.db' not in os.listdir(PATH_PRED):
-    df_trig = pd.read_csv(PATH_PRED + 'trigs_table.csv')
-    df_trig['ra'] = None
-    df_trig['dec'] = None
-    df_trig['ra_montecarlo'] = None
-    df_trig['dec_montecarlo'] = None
-    df_trig['ra_std'] = None
-    df_trig['dec_std'] = None
-    engine = create_engine('sqlite:////' + PATH_PRED + 'CATdatabase.db')
-    df_trig.to_sql('DEEP_TRI', index=False, con=engine)
-# Not in catalogue Fermi
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
-engine = create_engine('sqlite:////' + PATH_PRED + 'CATdatabase.db')
-deep_tri = pd.read_sql_table('DEEP_TRI', con=engine)
 
-deep_tri = deep_tri.loc[deep_tri[['ra', 'dec', 'ra_std', 'dec_std']].isna().any(axis=1)]
-# Dataset xxx_101225.csv xxx_2014.csv xxx_19_01-06.csv
-df_frg = pd.read_csv(PATH_PRED + 'frg_03-2019_06-2019.csv')
-df_bkg = pd.read_csv(PATH_PRED + 'bkg_03-2019_06-2019.csv')
-df_bkg['met'] = df_frg['met'].values
-col_det = ['n0', 'n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n7', 'n8', 'n9', 'na', 'nb']
+def update_event_catalogue_db(start_month: str = "03-2019", end_month: str = "07-2019") -> None:
+    """Updates candidate trigger records with PSO coordinates in the SQLite catalogue."""
+    pred_dir = DATA_DIR / FOLD_PRED
+    db_file = pred_dir / "CATdatabase.db"
+    loc_plots_dir = pred_dir / "loc"
+    loc_plots_dir.mkdir(parents=True, exist_ok=True)
 
-for _, row in deep_tri.iterrows():
-    day_name = row.start_times[2:10].replace('-', '')
-    # 101111, 140102, 140112, 190404, 190420
-    df_event = pd.read_csv(PATH_BKG + day_name + '.csv')
-    # 311194700, 410351700, 411228000, 576076200, 577492400
-    met_event = row.start_met
-    met_event_end = row.end_met
-    # Energy range detected
-    print('Trigger n°: ', row.trig_ids)
-    print('Detectors triggered: '+row.trig_dets)
-    energy_list = list((i[-1] for i in ['_r0', '_r1', '_r2'] if i in row.trig_dets))
-    # Select timestamps of the background event
-    df_frg_bkg = pd.merge(df_event, df_bkg, how='left', on=['met'], suffixes=('_frg', '_bkg'))
-    # Column of detectors detection
-    col_ra = np.sort([i for i in df_frg_bkg.columns if '_ra' in i and len(i) == 5 and 'n' in i])
-    col_dec = np.sort([i for i in df_frg_bkg.columns if '_dec' in i and len(i) == 6 and 'n' in i])
-    # Initialise inputs for localization
-    list_ra = pd.DataFrame()
-    list_dec = pd.DataFrame()
-    counts = pd.DataFrame()
-    counts_frg = pd.DataFrame()
-    counts_bkg = pd.DataFrame()
-    # select energy range to 0, 1, 2
-    e_max = 0
-    e_selected = None
-    for e_tmp in energy_list:
-        col_count_frg = np.sort([i for i in df_frg_bkg.columns if '_frg' in i and 'n' in i and '_r' + e_tmp + '_' in i])
-        col_count_bkg = np.sort([i for i in df_frg_bkg.columns if '_bkg' in i and 'n' in i and '_r' + e_tmp + '_' in i])
-        # Calculate the residuals
-        df_frg_bkg[col_det] = df_frg_bkg[col_count_frg].values - df_frg_bkg[col_count_bkg].values
-        # Filter the event with starttime (-4 seconds) and endtime of FoCus
-        df_frg_bkg_event = df_frg_bkg.loc[(df_frg_bkg['met'] >= met_event - 4) & (df_frg_bkg['met'] <= met_event_end), col_det]
-        # df_frg_bkg_event[col_det].plot()
-        if e_max < df_frg_bkg_event.max().max():
-            e_max = df_frg_bkg_event.max().max()
-            e_selected = e_tmp
-    # Noe choose the best energy range
-    col_count_frg = np.sort([i for i in df_frg_bkg.columns if '_frg' in i and 'n' in i and '_r' + e_selected + '_' in i])
-    col_count_bkg = np.sort([i for i in df_frg_bkg.columns if '_bkg' in i and 'n' in i and '_r' + e_selected + '_' in i])
-    # Calculate the residuals
-    df_frg_bkg[col_det] = df_frg_bkg[col_count_frg].values - df_frg_bkg[col_count_bkg].values
-    # Filter the event with starttime (-4 seconds) and endtime of FoCus
-    df_frg_bkg_event = df_frg_bkg.loc[
-        (df_frg_bkg['met'] >= met_event - 4) & (df_frg_bkg['met'] <= met_event_end), col_det]
-    # Another filter in time near the maximum values of residuals for the most triggered detector
-    max_fin = 0
-    ind_max = None
-    high_detector = None
-    for i in col_det:
-      max_tmp = df_frg_bkg_event.loc[:, i].max()
-      if max_tmp > max_fin:
-        max_fin = max_tmp
-        ind_max = df_frg_bkg_event.loc[:, i].idxmax()
-        high_detector = i
-    print('The index of the peak is: ', ind_max)
-    index_not_event = df_frg_bkg_event.loc[(df_frg_bkg_event.loc[:, high_detector] < 0), :].index
-    if len(index_not_event[index_not_event <= ind_max]) == 0:
-        index_start_peak = df_frg_bkg_event.index[0]
-    else:
-        index_start_peak = index_not_event[index_not_event <= ind_max][-1]
-    if len(index_not_event[index_not_event >= ind_max]) == 0:
-        index_end_peak = df_frg_bkg_event.index[-1]
-    else:
-        index_end_peak = index_not_event[index_not_event >= ind_max][0]
-    df_frg_bkg_event = df_frg_bkg_event.loc[index_start_peak:index_end_peak, :].dropna(axis=0)
-    index_final_filter = df_frg_bkg_event.index
+    db_uri = f"sqlite:///{db_file.resolve()}"
+    engine = create_engine(db_uri)
 
-    col_filter = range(0, 12)
-    # ind_max, index_final_filter
-    list_ra = list_ra.append(df_frg_bkg.loc[ind_max, np.array(col_ra)[col_filter]]/180*np.pi) # TODO update index start/end
-    list_dec = list_dec.append(df_frg_bkg.loc[ind_max, np.array(col_dec)[col_filter]]/180*np.pi)
-    counts = counts.append(np.maximum(df_frg_bkg.loc[ind_max, np.array(col_det)[col_filter]], 0))
-    counts_frg = counts_frg.append(df_frg_bkg.loc[ind_max, np.array(col_count_frg)[col_filter]])
-    counts_bkg = counts_bkg.append(df_frg_bkg.loc[ind_max, np.array(col_count_bkg)[col_filter]])
+    # Initialize table from CSV if database does not exist
+    trigs_csv = pred_dir / "trigs_table.csv"
+    if not db_file.exists():
+        if not trigs_csv.exists():
+            logging.error(f"Neither {db_file} nor {trigs_csv} exists.")
+            return
 
-    loc = localization(list_ra.values, list_dec.values, counts_frg.values, counts_bkg.values)
-    res = loc.fit()
-    print(res)
-    rnd_res = loc.fit_conf_int(250)
-    mean, cov = loc.plot()
+        df_trig = pd.read_csv(trigs_csv)
+        for c in ["ra", "dec", "ra_montecarlo", "dec_montecarlo", "ra_std", "dec_std"]:
+            df_trig[c] = np.nan
+        df_trig.to_sql("DEEP_TRI", con=engine, index=False, if_exists="replace")
+        logging.info("Initialized DEEP_TRI table in SQLite catalogue.")
 
-    # Update calalogue DB
-    sql = "UPDATE DEEP_TRI SET " + \
-          " ra = " + str(res['ra']) + "," + \
-          " dec = " + str(res['dec']) + "," + \
-          " ra_montecarlo = " + str(mean[0]) + "," + \
-          " dec_montecarlo = " + str(mean[1]) + "," + \
-          " ra_std = " + str(np.sqrt(cov[0][0])) + "," + \
-          " dec_std = " + str(np.sqrt(cov[1][1])) + \
-          " WHERE trig_ids = " + str(row.trig_ids)
-    with engine.begin() as conn:
-        conn.execute(sql)
+    deep_tri = pd.read_sql_table("DEEP_TRI", con=engine)
+    pending_events = deep_tri[deep_tri[["ra", "dec", "ra_std", "dec_std"]].isna().any(axis=1)]
 
-    # initialize the continuous data finder with a time (Fermi MET, UTC, or GPS)
-    for j in range(0, 3):
+    if pending_events.empty:
+        logging.info("All catalog triggers already have valid localizations. Nothing to update.")
+        return
+
+    logging.info(f"Found {len(pending_events)} triggers requiring localization updates.")
+
+    frg_path = pred_dir / f"frg_{start_month}_{end_month}.csv"
+    bkg_path = pred_dir / f"bkg_{start_month}_{end_month}.csv"
+    if not frg_path.exists() or not bkg_path.exists():
+        logging.error("Missing prediction matrices for localization update.")
+        return
+
+    df_frg = pd.read_csv(frg_path)
+    df_bkg = pd.read_csv(bkg_path)
+    df_bkg["met"] = df_frg["met"].values
+    col_det = ["n0", "n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8", "n9", "na", "nb"]
+
+    for _, row in pending_events.iterrows():
+        t_id = row["trig_ids"]
+        logging.info(f"Processing trigger ID: {t_id}")
+
         try:
-            cont_finder = ContinuousFtp(met=met_event)
-            cont_finder.get_poshist('tmp')
-            # open a poshist file
-            poshist = PosHist.open("tmp/" + os.listdir("../tmp")[0])
-            os.remove("tmp/" + os.listdir("../tmp")[0])
-            # initialize plot
-            skyplot = SkyPlot()
-            # plot the orientation of the detectors and Earth blockage at our time of interest
-            skyplot.add_poshist(poshist, trigtime=met_event)
-            gauss_map = HealPix.from_gaussian(np.round(res['ra']), np.round(res['dec']), 10)
-            skyplot.add_healpix(gauss_map)
-            plt.savefig(PATH_PRED + 'loc/' + 'out_' + str(row.trig_ids) +'_loc.png')
-            plt.close()
-            break
-        except Exception as e:
-            print(e)
-            [os.remove("tmp/" + file) for file in os.listdir("../tmp")]
-            pass
+            day_name = str(row["start_times"])[2:10].replace("-", "")
+            day_file = DATA_DIR / FOLD_BKG / f"{day_name}.csv"
+            if not day_file.exists():
+                logging.warning(f"Telemetry file {day_file} missing. Skipping.")
+                continue
 
-pass
+            df_event = pd.read_csv(day_file)
+            met_event = float(row["start_met"])
+            met_event_end = float(row["end_met"])
+
+            df_frg_bkg = pd.merge(df_event, df_bkg, how="left", on=["met"], suffixes=("_frg", "_bkg"))
+
+            col_ra = np.sort([c for c in df_frg_bkg.columns if "_ra" in c and len(c) == 5 and "n" in c])
+            col_dec = np.sort([c for c in df_frg_bkg.columns if "_dec" in c and len(c) == 6 and "n" in c])
+
+            # Select dominant energy range
+            trig_dets = str(row.get("trig_dets", ""))
+            energy_list = [i[-1] for i in ["_r0", "_r1", "_r2"] if i in trig_dets] or ["1"]
+
+            e_max = -1.0
+            e_selected = energy_list[0]
+
+            for e_tmp in energy_list:
+                c_frg = np.sort([c for c in df_frg_bkg.columns if "_frg" in c and "n" in c and f"_r{e_tmp}_" in c])
+                c_bkg = np.sort([c for c in df_frg_bkg.columns if "_bkg" in c and "n" in c and f"_r{e_tmp}_" in c])
+                diff_window = (df_frg_bkg[c_frg].values - df_frg_bkg[c_bkg].values)
+                mask_w = (df_frg_bkg["met"] >= met_event - 4.0) & (df_frg_bkg["met"] <= met_event_end)
+                peak_val = np.nanmax(diff_window[mask_w]) if mask_w.any() else -1.0
+                if peak_val > e_max:
+                    e_max = peak_val
+                    e_selected = e_tmp
+
+            col_count_frg = np.sort([c for c in df_frg_bkg.columns if "_frg" in c and "n" in c and f"_r{e_selected}_" in c])
+            col_count_bkg = np.sort([c for c in df_frg_bkg.columns if "_bkg" in c and "n" in c and f"_r{e_selected}_" in c])
+
+            df_frg_bkg[col_det] = df_frg_bkg[col_count_frg].values - df_frg_bkg[col_count_bkg].values
+            mask_w = (df_frg_bkg["met"] >= met_event - 4.0) & (df_frg_bkg["met"] <= met_event_end)
+            df_ev_sub = df_frg_bkg.loc[mask_w, col_det]
+
+            if df_ev_sub.empty:
+                continue
+
+            ind_max = df_ev_sub.max(axis=1).idxmax()
+
+            ra_vals = np.atleast_2d(np.asarray(df_frg_bkg.loc[ind_max, col_ra], dtype=np.float64) / 180.0 * np.pi)
+            dec_vals = np.atleast_2d(np.asarray(df_frg_bkg.loc[ind_max, col_dec], dtype=np.float64) / 180.0 * np.pi)
+            cnt_frg = np.atleast_2d(np.asarray(df_frg_bkg.loc[ind_max, col_count_frg], dtype=np.float64))
+            cnt_bkg = np.atleast_2d(np.asarray(df_frg_bkg.loc[ind_max, col_count_bkg], dtype=np.float64))
+
+            loc = Localization(ra_vals, dec_vals, cnt_frg, cnt_bkg)
+            res = loc.fit()
+            _ = loc.fit_conf_int(250)
+            mean, cov = loc.plot(plot_show=False)
+
+            ra_std_val = float(np.sqrt(cov[0][0])) if cov is not None else 0.0
+            dec_std_val = float(np.sqrt(cov[1][1])) if cov is not None else 0.0
+
+            # Safe parametrized SQL update query
+            update_query = text("""
+                UPDATE DEEP_TRI
+                SET ra = :ra,
+                    dec = :dec,
+                    ra_montecarlo = :ra_mc,
+                    dec_montecarlo = :dec_mc,
+                    ra_std = :ra_std,
+                    dec_std = :dec_std
+                WHERE trig_ids = :t_id
+            """)
+
+            with engine.begin() as conn:
+                conn.execute(update_query, {
+                    "ra": float(res["ra"]),
+                    "dec": float(res["dec"]),
+                    "ra_mc": float(mean[0]),
+                    "dec_mc": float(mean[1]),
+                    "ra_std": ra_std_val,
+                    "dec_std": dec_std_val,
+                    "t_id": t_id
+                })
+
+            # Save skyplot
+            tmp_dir = DATA_DIR / "tmp_pos"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                cont_finder = ContinuousFtp(met=int(round(met_event)))
+                cont_finder.get_poshist(str(tmp_dir))
+                p_files = list(tmp_dir.glob("*.fits")) + list(tmp_dir.glob("*.fit"))
+                if p_files:
+                    poshist = PosHist.open(str(p_files[0]))
+                    skyplot = SkyPlot()
+                    skyplot.add_poshist(poshist, trigtime=met_event)
+                    gauss_map = HealPix.from_gaussian(float(np.round(res["ra"])), float(np.round(res["dec"])), 10.0)
+                    skyplot.add_healpix(gauss_map)
+                    skyplot_path = loc_plots_dir / f"out_{t_id}_loc.png"
+                    plt.savefig(skyplot_path, dpi=150, bbox_inches="tight")
+                    plt.close("all")
+                    p_files[0].unlink(missing_ok=True)
+            except Exception as e_plot:
+                logging.warning(f"Could not save SkyPlot for {t_id}: {e_plot}")
+
+        except Exception as e:
+            logging.error(f"Failed updating trigger {t_id}: {e}")
+            continue
+
+    logging.info("SQLite catalogue update process completed.")
+
+
+if __name__ == "__main__":
+    update_event_catalogue_db()

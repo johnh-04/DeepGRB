@@ -1,125 +1,108 @@
-import pandas as pd
+"""
+LaTeX table formatter module.
+Aggregates detected candidate events from the three historical epochs
+and formats them for scientific publication / LaTeX thesis tables.
+"""
+
+import logging
+from pathlib import Path
 import numpy as np
-from pipeline.manual_label import p_manual_2011, p_manual_2014, p_manual_2019, selected_trig_eve, event_2010, \
-    event_2014, event_2019, the_events
-from connections.utils.config import FOLD_RES, DEEP_GRB_CSV
+import pandas as pd
 
-pd.options.display.max_rows = 100
-pd.options.display.max_columns = 100
-pd.options.display.width = 1000
+from connections.utils.config import DATA_DIR, FOLD_RES, DEEP_GRB_CSV
+from pipeline.manual_label import (
+    P_MANUAL_2011, P_MANUAL_2014, P_MANUAL_2019,
+    EVENT_2010, EVENT_2014, EVENT_2019, THE_EVENTS, SELECTED_TRIG_EVE
+)
 
-bln_to_latex = True  # If False save to csv
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
-path_1 = FOLD_RES
-p_2014 = "frg_01-2014_03-2014/"
-p_2019 = "frg_03-2019_07-2019/"
-p_2011 = "frg_11-2010_02-2011/"
 
-df_tmp = pd.DataFrame()
-e_v = pd.read_csv(path_1 + p_2011 + "events_table.csv")
-e_v['catalog_triggers'] = p_manual_2011
-df_tmp = df_tmp.append(e_v)
-e_v = pd.read_csv(path_1 + p_2014 + "events_table.csv")
-e_v['catalog_triggers'] = p_manual_2014
-df_tmp = df_tmp.append(e_v)
-e_v = pd.read_csv(path_1 + p_2019 + "events_table.csv")
-e_v['catalog_triggers'] = p_manual_2019
-df_tmp = df_tmp.append(e_v)
+def generate_latex_tables(save_to_file: bool = True) -> None:
+    """Consolidates event tables from all epochs and generates LaTeX tables."""
+    periods = [
+        ("frg_11-2010_02-2011", P_MANUAL_2011),
+        ("frg_01-2014_03-2014", P_MANUAL_2014),
+        ("frg_03-2019_07-2019", P_MANUAL_2019),
+    ]
 
-df_tmp = df_tmp.reset_index(drop=True)
-df_tmp.drop(columns=['start_index', 'end_index', 'end_times'], inplace=True)
-df_tmp['period'] = (df_tmp['start_times'].str.slice(0, 4)).apply(lambda x: '2010' if x == '2011' else x)
-df_tmp['trig_ids'] = df_tmp['period'] + '_' + df_tmp['trig_ids'].astype(str)
-df_tmp['datetime'] = df_tmp['start_times'].str.slice(0, 19)
-df_tmp['det trigs'] = df_tmp['trig_dets'].apply(lambda x: ' '.join(np.sort(list(set([i.split('_')[0] for i in x.split(' ')])))))
-df_tmp['start_met'] = df_tmp['start_met'].astype('int')
-df_tmp['end_met'] = df_tmp['end_met'].astype('int')
-df_tmp['sigma_r0'] = df_tmp['sigma_r0'].round(2)
-df_tmp['sigma_r1'] = df_tmp['sigma_r1'].round(2)
-df_tmp['sigma_r2'] = df_tmp['sigma_r2'].round(2)
-df_tmp['duration'] = df_tmp['duration'].round(2)
-df_tmp['sigma_max'] = df_tmp[['sigma_r0', 'sigma_r1', 'sigma_r2']].max(axis=1)
+    dfs = []
+    for folder_name, labels in periods:
+        p_path = DATA_DIR / FOLD_RES / folder_name / "events_table.csv"
+        if not p_path.exists():
+            logging.warning(f"Events table missing at: {p_path}")
+            continue
+        sub_df = pd.read_csv(p_path)
+        sub_df["catalog_triggers"] = list(labels[:len(sub_df)])
+        dfs.append(sub_df)
 
-df_tmp2 = df_tmp[['trig_ids', 'datetime', 'duration', 'det trigs', 'catalog_triggers',
-                 'sigma_r0', 'sigma_r1', 'sigma_r2', 'sigma_max']]
+    if not dfs:
+        raise FileNotFoundError("No candidate events tables found across historical periods.")
 
-df_tmp2 = df_tmp2.loc[(df_tmp2['catalog_triggers'] != 'f') & (df_tmp2['catalog_triggers'] != 'f (ssa)')]
-df_tmp2['catalog_triggers'] = df_tmp2['catalog_triggers'].replace('u', 'UNKNOWN')
-df_tmp2 = df_tmp2.reset_index(drop=True)
+    df_all = pd.concat(dfs, ignore_index=True)
+    df_all.drop(columns=[c for c in ["start_index", "end_index", "end_times"] if c in df_all.columns], inplace=True)
 
-# All
-print('Stat. with UNKNOWN', df_tmp2.loc[df_tmp2['catalog_triggers'] == 'UNKNOWN',
-                                        ['sigma_r0', 'sigma_r1', 'sigma_r2', 'sigma_max']].describe())
-print('Stat. with event in catalog', df_tmp2.loc[df_tmp2['catalog_triggers'] != 'UNKNOWN',
-                                                 ['sigma_r0', 'sigma_r1', 'sigma_r2', 'sigma_max']].describe())
-# 2011
-print('Stat. with UNKNOWN 2011', df_tmp2.loc[(df_tmp2['catalog_triggers'] == 'UNKNOWN')&(
-        (df_tmp2['datetime'].str.slice(0, 4)=='2010')|(df_tmp2['datetime'].str.slice(0, 4)=='2011')),
-                                        ['sigma_r0', 'sigma_r1', 'sigma_r2', 'sigma_max']].describe())
-print('Stat. with event in catalog', df_tmp2.loc[(df_tmp2['catalog_triggers'] != 'UNKNOWN')&(
-        (df_tmp2['datetime'].str.slice(0, 4)=='2010')|(df_tmp2['datetime'].str.slice(0, 4)=='2011')),
-                                                 ['sigma_r0', 'sigma_r1', 'sigma_r2', 'sigma_max']].describe())
-# 2014
-print('Stat. with UNKNOWN 2014', df_tmp2.loc[(df_tmp2['catalog_triggers'] == 'UNKNOWN')&(df_tmp2['datetime'].str.slice(0, 4)=='2014'),
-                                        ['sigma_r0', 'sigma_r1', 'sigma_r2', 'sigma_max']].describe())
-print('Stat. with event in catalog', df_tmp2.loc[(df_tmp2['catalog_triggers'] != 'UNKNOWN')&(df_tmp2['datetime'].str.slice(0, 4)=='2014'),
-                                                 ['sigma_r0', 'sigma_r1', 'sigma_r2', 'sigma_max']].describe())
-# 2019
-print('Stat. with UNKNOWN 2019', df_tmp2.loc[(df_tmp2['catalog_triggers'] == 'UNKNOWN')&(df_tmp2['datetime'].str.slice(0, 4)=='2019'),
-                                        ['sigma_r0', 'sigma_r1', 'sigma_r2', 'sigma_max']].describe())
-print('Stat. with event in catalog', df_tmp2.loc[(df_tmp2['catalog_triggers'] != 'UNKNOWN')&(df_tmp2['datetime'].str.slice(0, 4)=='2019'),
-                                                 ['sigma_r0', 'sigma_r1', 'sigma_r2', 'sigma_max']].describe())
+    df_all["period"] = df_all["start_times"].astype(str).str.slice(0, 4).apply(lambda x: "2010" if x == "2011" else x)
+    df_all["trig_ids"] = df_all["period"] + "_" + df_all["trig_ids"].astype(str)
+    df_all["datetime"] = df_all["start_times"].astype(str).str.slice(0, 19)
 
-del df_tmp2['sigma_max']
+    if "trig_dets" in df_all.columns:
+        df_all["det trigs"] = df_all["trig_dets"].apply(
+            lambda x: " ".join(sorted(list({d.split("_")[0] for d in str(x).split()})))
+        )
+    else:
+        df_all["det trigs"] = ""
 
-df_tmp2['S_type'] = 'None'
-df_tmp2.loc[(((df_tmp2[['sigma_r0', 'sigma_r1', 'sigma_r2']]>0).sum(axis=1)>1)&\
-             ((df_tmp2['det trigs'].str.len())>2)), 'S_type'] = 'R'
-df_tmp2.loc[(((df_tmp2[['sigma_r0', 'sigma_r1', 'sigma_r2']]>0).sum(axis=1)==1)&\
-                   ((df_tmp2['det trigs'].str.len())>2)), 'S_type'] = 'S'
-df_tmp2.loc[ (((df_tmp2['det trigs'].str.len())==2)), 'S_type'] = 'P'
+    for c in ["start_met", "end_met"]:
+        if c in df_all.columns:
+            df_all[c] = df_all[c].astype(int)
 
-for col_sigma in ['sigma_r0', 'sigma_r1', 'sigma_r2']:
-    if df_tmp2.loc[df_tmp2[col_sigma] < 0, :].shape[0] > 0:
-        print(df_tmp2.loc[df_tmp2[col_sigma] < 0, :])
-        df_tmp2.loc[df_tmp2[col_sigma] < 0, col_sigma] = 0
-    # Set a symbol to avoid enormous standard score
-    #df_tmp2[col_sigma] = df_tmp2[col_sigma].astype('str')
-    df_tmp2.loc[df_tmp2[col_sigma] > 10, col_sigma] = '$>10$'
+    for c in ["sigma_r0", "sigma_r1", "sigma_r2", "duration"]:
+        if c in df_all.columns:
+            df_all[c] = df_all[c].round(2)
 
-df_tmp_sorted = df_tmp.sort_values(by=['sigma_max'])
-print(df_tmp2[df_tmp2['datetime'].isin(selected_trig_eve)])
+    df_all["sigma_max"] = df_all[["sigma_r0", "sigma_r1", "sigma_r2"]].max(axis=1)
 
-# Join tentative assign class transient
-ev_class_2010 = pd.DataFrame({'trig_ids': ['2010_'+str(i) for i in event_2010.keys()], 'class': event_2010.values()})
-ev_class_2014 = pd.DataFrame({'trig_ids': ['2014_'+str(i) for i in event_2014.keys()], 'class': event_2014.values()})
-ev_class_2019 = pd.DataFrame({'trig_ids': ['2019_'+str(i) for i in event_2019.keys()], 'class': event_2019.values()})
-ev_class = ev_class_2010.append(ev_class_2014, ignore_index=True).append(ev_class_2019, ignore_index=True)
-df_tmp2_class = pd.merge(df_tmp2, ev_class, how='left', on=['trig_ids'])
+    # Filter false alarms and annotate UNKNOWN
+    cols_summary = ["trig_ids", "datetime", "duration", "det trigs", "catalog_triggers", "sigma_r0", "sigma_r1", "sigma_r2", "sigma_max"]
+    df_filtered = df_all[[c for c in cols_summary if c in df_all.columns]].copy()
+    df_filtered = df_filtered[~df_filtered["catalog_triggers"].isin(["f", "f (ssa)"])].reset_index(drop=True)
+    df_filtered["catalog_triggers"] = df_filtered["catalog_triggers"].replace("u", "UNKNOWN")
 
-# Unknown class - add tentative event class
-idx_tmp = np.where(df_tmp2_class.loc[df_tmp2_class['catalog_triggers'] == 'UNKNOWN', 'class'].isna())
-if len(idx_tmp):
-    print(df_tmp2_class.loc[df_tmp2_class['catalog_triggers'] == 'UNKNOWN', :].iloc[idx_tmp])
-idx_tmp = np.where(df_tmp2_class.loc[df_tmp2_class['catalog_triggers'] != 'UNKNOWN', 'class'].notna())
-if len(idx_tmp):
-    print(df_tmp2_class.loc[df_tmp2_class['catalog_triggers'] != 'UNKNOWN', :].iloc[idx_tmp])
+    # Merge tentative class labels
+    classes_list = [
+        pd.DataFrame({"trig_ids": [f"2010_{k}" for k in EVENT_2010], "class": list(EVENT_2010.values())}),
+        pd.DataFrame({"trig_ids": [f"2014_{k}" for k in EVENT_2014], "class": list(EVENT_2014.values())}),
+        pd.DataFrame({"trig_ids": [f"2019_{k}" for k in EVENT_2019], "class": list(EVENT_2019.values())}),
+    ]
+    df_classes = pd.concat(classes_list, ignore_index=True)
+    df_merged = pd.merge(df_filtered, df_classes, how="left", on=["trig_ids"])
+    df_merged["class"] = df_merged["class"].fillna("")
 
-df_tmp2_class['class'] = df_tmp2_class['class'].fillna('')
+    is_unk = df_merged["catalog_triggers"] == "UNKNOWN"
+    df_merged.loc[is_unk, "catalog_triggers"] = "UNKNOWN: " + df_merged.loc[is_unk, "class"]
+    df_merged.drop(columns=["class"], inplace=True)
 
-idx_unknown = df_tmp2_class['catalog_triggers'] == 'UNKNOWN'
-df_tmp2_class.loc[idx_unknown, 'catalog_triggers'] = 'UNKNOWN: ' + df_tmp2_class['class']
-del df_tmp2_class['class']
+    # Highlight benchmark events
+    for t_id in THE_EVENTS:
+        df_merged.loc[df_merged["trig_ids"] == t_id, "trig_ids"] = t_id + "*"
 
-# add * to the seven events
-for trig_ids_tmp in the_events:
-    df_tmp2_class.loc[df_tmp2_class['trig_ids'] == trig_ids_tmp, 'trig_ids'] = trig_ids_tmp + '*'
+    # Output LaTeX tables
+    latex_unk = df_merged[is_unk].to_latex(index=False)
+    latex_known = df_merged[~is_unk].to_latex(index=False)
 
-if not bln_to_latex:
-    df_tmp2_class.to_csv(DEEP_GRB_CSV)
+    if save_to_file:
+        out_tex_path = DATA_DIR / "plots" / "tables_publication.tex"
+        with open(out_tex_path, "w") as f:
+            f.write("% UNKNOWN CANDIDATE EVENTS\n")
+            f.write(latex_unk)
+            f.write("\n\n% CONFIRMED CATALOG TRIGGERS\n")
+            f.write(latex_known)
+        logging.info(f"LaTeX tables written successfully to: {out_tex_path}")
 
-# print latex tables
-print(df_tmp2_class[idx_unknown].to_latex())
-print(df_tmp2_class[~idx_unknown].to_latex())
+    print("\n[PREVIEW LATEX UNKNOWN EVENTS TABLE]:\n")
+    print(latex_unk[:800] + "\n... [TRUNCATED] ...\n")
 
-pass
+
+if __name__ == "__main__":
+    generate_latex_tables()

@@ -1,220 +1,173 @@
-# import utils
-import os
+"""
+Data preprocessing module.
+Extracts daily CSPEC binned spectra and orbital geometry, aligning count rates to continuous 4.096 s steps.
+"""
+
 import logging
+import os
+from pathlib import Path
+from typing import Dict, List, Tuple
 from joblib import Parallel, delayed
-# GBM data tools
-from gbm.data import Ctime, Cspec
-from gbm.binning.binned import rebin_by_time
-from gbm.data import PosHist
-from gbm import coords
-# Standard packages
 import numpy as np
 import pandas as pd
-from connections.utils.config import PATH_TO_SAVE, FOLD_CSPEC_POS, FOLD_BKG
+from gbm import coords
+from gbm.binning.binned import rebin_by_time
+from gbm.data import Cspec, PosHist
+
+from connections.utils.config import DATA_DIR, FOLD_BKG, FOLD_CSPEC_POS
+
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 
-def build_table(df_days, erange, bool_overwrite=False, bool_parallel=False, n_jobs=-1):
+def build_table(
+    df_days: pd.DataFrame,
+    erange: Dict[str, List[Tuple[float, float]]],
+    bool_overwrite: bool = False,
+    bool_parallel: bool = False,
+    n_jobs: int = 4,
+) -> None:
     """
-    :param df_days: pandas DataFrame, table of the days downloaded in FOLD_BKG folder.
-    :param erange: dict, dictionary of list of energy range for NaI and Bi detectors.
-        E.g. {'n': [(28, 50), (50, 300), (300, 500)], 'b': [(756, 5025), (5025, 50000)]}
-    :param bool_overwrite: bool, if True overwrite the tables (csv files).
-    :param bool_parallel: choose if use all CPU for computing the lightcurve (rebinning phase is long).
-    :param n_jobs: number of jobs to create, default -1 (use all CPUs).
-    :return:
+    Parses downloaded daily CSPEC and Poshist FITS files into consolidated telemetry tables.
+
+    :param df_days: DataFrame of target observation days
+    :param erange: Energy range specifications for NaI ('n') and BGO ('b') detectors
+    :param bool_overwrite: If True, regenerates existing daily CSV files
+    :param bool_parallel: If True, uses joblib multiprocessing across PHA files
+    :param n_jobs: Maximum concurrent worker processes (safe default: 4)
     """
-    logging.info("Begin build table (csv files).")
-    os.makedirs(PATH_TO_SAVE + FOLD_BKG, exist_ok=True)
+    bkg_dir = DATA_DIR / FOLD_BKG
+    cspec_dir = DATA_DIR / FOLD_CSPEC_POS
+    bkg_dir.mkdir(parents=True, exist_ok=True)
+
+    logging.info("Starting daily spectral binning and poshist consolidation...")
+
     for _, row in df_days.iterrows():
+        day_str = str(row["id"])[:6]
+        target_csv = bkg_dir / f"{day_str}.csv"
+
+        if target_csv.exists() and not bool_overwrite:
+            continue
+
         try:
-            # Sort list file to have cspec + poshist in FOLD_CSPEC_POS
-            list_file = os.listdir(PATH_TO_SAVE + FOLD_CSPEC_POS)
-            # List of csv of background: lightcurve + satellate features
-            list_csv = os.listdir(PATH_TO_SAVE + FOLD_BKG)
-            if (row['id'][0:6]+'.csv' not in list_csv) or bool_overwrite:
-                # Initialise the data dictionary
-                dic_data = {}
-                list_pha = [i for i in list_file if '.pha' in i and row['id'][0:6] in i]
-                list_pha = np.sort(list_pha)
-                # If .pha files are less than 12 NaI + 2 Bi don't proceed
-                if len(list_pha) < 14:
-                    logging.warning('Not enough detectors (.pha file) in day: ' + row['id'][0:6])
-                    continue
+            available_files = os.listdir(str(cspec_dir))
+            pha_files = sorted([f for f in available_files if ".pha" in f and day_str in f])
 
-                if bool_parallel:
-                    # Define the generator for Parallel
-                    def fun_lightcurve_param(file_tmp):
-                        print('Processing file: ' + file_tmp)
-                        res = fun_lightcurve(dic_data={}, file_tmp=file_tmp, erange=erange)
-                        print('End processing file: ' + file_tmp)
-                        return res
-                    # Parallelize
-                    results = Parallel(n_jobs=n_jobs, verbose=1)(delayed(fun_lightcurve_param)(file_tmp)
-                                                             for file_tmp in list_pha)
-                    # Build dic_data inserting each detector_range values and met timestamp
-                    for res_dec_i in results:
-                        name_dets_i = [i for i in list(res_dec_i.keys()) if i != 'met']
-                        # Add detector_rage in dic_data
-                        for det_tmp in name_dets_i:
-                            dic_data[det_tmp] = res_dec_i[det_tmp]
-                        # Add met timestamp if not present
-                        if 'met' not in list(dic_data.keys()):
-                            dic_data['met'] = res_dec_i['met']
-                else:
-                    for file_tmp in list_pha:
-                        # Transform counts data
-                        dic_data = fun_lightcurve(dic_data, file_tmp, erange)
+            if len(pha_files) < 14:
+                logging.warning(f"Incomplete detector set ({len(pha_files)}/14 files) for day {day_str}. Skipping.")
+                continue
 
-                # Add poshist variables
-                file_pos = [i for i in list_file if 'poshist' in i and row['id'][0:6] in i]
-                if len(file_pos) > 0:
-                    file_pos = np.sort(file_pos)[::-1]
-                    file_pos = file_pos[0]
-                else:
-                    logging.warning('Not poshist file in day: ' + row['id'][0:6])
-                    continue
-                dic_data = fun_poshist(dic_data, file_pos)
-                # Create final dataset
-                df_data = pd.DataFrame(dic_data)
-                if df_data.isna().sum().sum() > 0:
-                    logging.warning('NaN values in csv table.')
-                    logging.warning(df_data.isna().sum())
-                logging.info('Saving file: ' + row['id'][0:6])
-                df_data.to_csv(PATH_TO_SAVE + FOLD_BKG + '/' + row['id'][0:6] + '.csv', index=False)
+            dic_data: Dict[str, np.ndarray] = {}
+
+            if bool_parallel:
+                results = Parallel(n_jobs=min(n_jobs, 4), verbose=0)(
+                    delayed(fun_lightcurve)({}, f, erange) for f in pha_files
+                )
+                for res_item in results:
+                    for k, v in res_item.items():
+                        if k != "met" or "met" not in dic_data:
+                            dic_data[k] = v
+            else:
+                for f in pha_files:
+                    dic_data = fun_lightcurve(dic_data, f, erange)
+
+            # Locate orbital poshist file (search in cspec_dir and poshist_dir)
+            pos_dir = cspec_dir.parent / "poshist"
+            candidate_files = []
+            if cspec_dir.exists():
+                candidate_files.extend([cspec_dir / f for f in os.listdir(str(cspec_dir))])
+            if pos_dir.exists():
+                candidate_files.extend([pos_dir / f for f in os.listdir(str(pos_dir))])
+
+            pos_files = sorted([f for f in candidate_files if "poshist" in f.name and day_str in f.name], reverse=True)
+            if not pos_files:
+                logging.warning(f"Missing Poshist file for day {day_str}. Skipping.")
+                continue
+
+            dic_data = fun_poshist(dic_data, pos_files[0])
+
+            df_out = pd.DataFrame(dic_data)
+            df_out.to_csv(target_csv, index=False)
+            logging.info(f"Processed and cached day: {day_str}")
 
         except Exception as e:
-            logging.error(e)
-            logging.error('Error for file: ' + row['id'][0:6])
-    logging.info("End preprocess csv files.")
+            logging.error(f"Failed preprocessing day {day_str}: {e}")
 
 
-def fun_lightcurve(dic_data, file_tmp, erange):
-    """
-    Function that operate on cspec or ctime. Return the lightcurve of file_tmp in the energy range of erange.
-    :param dic_data: dictionary of data counts (lightcurve) of the detectors in various energy range.
-    :param file_tmp: the name of the daily file .pha.
-    :param erange: dict, dictionary of list of energy range for NaI and Bi detectors.
-    :return:
-    """
-    if '.pha' in file_tmp:
-        logging.info('Lightcurve execution.')
-        # read a cspec file
-        logging.info('Reading file: ' + file_tmp)
-        # ctime or cspec?
-        c_tmp = Cspec.open(PATH_TO_SAVE + FOLD_CSPEC_POS + '/' + file_tmp)
-        # integrate over range of energy
-        if '_n' in file_tmp:
-            type_detector = 'n'
-        elif '_b' in file_tmp:
-            type_detector = 'b'
-        else:
-            logging.error('Error. NaI or Bi detector if file.')
-            raise
-        # num_detector = file_tmp.headers['PRIMARY']['DETNAM']
-        num_detector = file_tmp[(file_tmp.find(type_detector)+1):(file_tmp.find(type_detector)+2)]
+def fun_lightcurve(
+    dic_data: Dict[str, np.ndarray],
+    file_tmp: str,
+    erange: Dict[str, List[Tuple[float, float]]],
+) -> Dict[str, np.ndarray]:
+    """Integrates counts over energy channels and rebins to 4.096 s resolution."""
+    cspec_dir = DATA_DIR / FOLD_CSPEC_POS
+    cspec_obj = Cspec.open(str(cspec_dir / file_tmp))
 
-        lightcurve = None
-        for idx, erange_tmp in enumerate(erange[type_detector]):
-            try:
-                logging.info('Start binning and energy integrating phase')
-                # integrate over the four range keV
-                # lightcurve = rebinned_cspec.to_lightcurve(energy_range=erange_tmp)
-                lightcurve_unbinned = c_tmp.to_lightcurve(energy_range=erange_tmp)
-                # if slice id needed, then: .slice(tstart=c_tmp.time_range[0] + 0, tstop=c_tmp.time_range[1])
-                # rebin the data to 4096 ms resolution
-                lightcurve = lightcurve_unbinned.rebin(rebin_by_time, 4.096)
-                # the lightcurve bin centroids and count rates
-                dic_data[type_detector+num_detector+'_r'+str(idx)] = lightcurve.rates
-                logging.info('End binning and energy integrating phase')
-            except:
-                logging.error("Warning in file: " + str(file_tmp))
-                raise
-        if 'met' not in dic_data.keys():
-            # Set the timestamp as the first centroid of the lightcurve
-            if lightcurve is not None:
-                dic_data['met'] = lightcurve.centroids
-            else:
-                logging.error('Lightcurve not computed correctly.')
-                raise
-        # Remove file if all the data are saved in dic_data
-        # os.remove(PATH_TO_SAVE + FOLD_CSPEC_POS + '/' + file_tmp)
-        return dic_data
+    det_type = "n" if "_n" in file_tmp else ("b" if "_b" in file_tmp else None)
+    if not det_type:
+        raise ValueError(f"Unknown detector signature in filename: {file_tmp}")
 
-    else:
-        logging.error('Error. Not a .pha file.')
-        raise
+    det_idx = file_tmp[file_tmp.find(det_type) + 1]
+    lightcurve = None
+
+    for idx, rng in enumerate(erange[det_type]):
+        lc_unbinned = cspec_obj.to_lightcurve(energy_range=rng)
+        lightcurve = lc_unbinned.rebin(rebin_by_time, 4.096)
+        dic_data[f"{det_type}{det_idx}_r{idx}"] = lightcurve.rates
+
+    if "met" not in dic_data and lightcurve is not None:
+        dic_data["met"] = lightcurve.centroids
+
+    return dic_data
 
 
-def fun_poshist(dic_data, file_tmp):
-    """
-    Function that operate on poshist file
-    :param dic_data:
-    :param file_tmp:
-    :return:
-    """
-    if 'poshist' in file_tmp:
-        logging.info('Poshist execution.')
-        # read a poshist file
-        logging.info('Reading file: ' + file_tmp)
-        # open poshist
-        p_tmp = PosHist.open(PATH_TO_SAVE + FOLD_CSPEC_POS + '/' + file_tmp)
-        # Select only times for the interpolation
-        met_ts = dic_data['met']
-        time_filter = (met_ts >= p_tmp._times.min()) & (met_ts <= p_tmp._times.max())
-        for key in dic_data.keys():
-            if (dic_data['met'].shape[0] - dic_data[key].shape[0]) > 10:
-                logging.warning("Dimension of dic_data cspec of met different for: " + str(key) +
-                              ". {:10.0f}".format(dic_data['met'].shape[0]) +
-                              " and {:10.0f}".format(dic_data[key].shape[0]))
-            dic_data[key] = dic_data[key][time_filter]
-        met_ts = dic_data['met']
-        # # # Add feature columns
-        # TODO average the position over 4 seconds
-        # Position and rotation
-        var_tmp = p_tmp.get_eic(met_ts)
-        dic_data['pos_x'] = var_tmp[0]
-        dic_data['pos_y'] = var_tmp[1]
-        dic_data['pos_z'] = var_tmp[2]
-        var_tmp = p_tmp.get_quaternions(met_ts)
-        dic_data['a'] = var_tmp[0]
-        dic_data['b'] = var_tmp[1]
-        dic_data['c'] = var_tmp[2]
-        dic_data['d'] = var_tmp[3]
-        dic_data['lat'] = p_tmp.get_latitude(met_ts)
-        dic_data['lon'] = p_tmp.get_longitude(met_ts)
-        dic_data['alt'] = p_tmp.get_altitude(met_ts)
-        # Velocity
-        var_tmp = p_tmp.get_velocity(met_ts)
-        dic_data['vx'] = var_tmp[0]
-        dic_data['vy'] = var_tmp[1]
-        dic_data['vz'] = var_tmp[2]
-        var_tmp = p_tmp.get_angular_velocity(met_ts)
-        dic_data['w1'] = var_tmp[0]
-        dic_data['w2'] = var_tmp[1]
-        dic_data['w3'] = var_tmp[2]
-        # Sun and Earth visibility
-        dic_data['sun_vis'] = p_tmp.get_sun_visibility(met_ts)
-        var_tmp = coords.get_sun_loc(met_ts)
-        dic_data['sun_ra'] = var_tmp[0]
-        dic_data['sun_dec'] = var_tmp[1]
-        dic_data['earth_r'] = p_tmp.get_earth_radius(met_ts)
-        var_tmp = p_tmp.get_geocenter_radec(met_ts)
-        dic_data['earth_ra'] = var_tmp[0]
-        dic_data['earth_dec'] = var_tmp[1]
-        # Detectors pointing and visibility
-        for det_name in ['n0', 'n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n7', 'n8', 'n9', 'na', 'nb', 'b0', 'b1']:
-            # Equatorial pointing for each detector
-            var_tmp = p_tmp.detector_pointing(det_name, met_ts)
-            dic_data[det_name + '_' + 'ra'] = var_tmp[0]
-            dic_data[det_name + '_' + 'dec'] = var_tmp[1]
-            # Obscured by earth
-            dic_data[det_name + '_' + 'vis'] = p_tmp.location_visible(var_tmp[0], var_tmp[1], met_ts)
-        # Magnetic field
-        dic_data['saa'] = p_tmp.get_saa_passage(met_ts)
-        dic_data['l'] = p_tmp.get_mcilwain_l(met_ts)
-        # # # End add columns
-        # Remove file if all the data are saved in dic_data
-        # os.remove(PATH_TO_SAVE + FOLD_CSPEC_POS + '/' + file_tmp)
-        return dic_data
-    else:
-        logging.error('Error. Not a poshist file.')
+def fun_poshist(dic_data: Dict[str, np.ndarray], file_pos: str) -> Dict[str, np.ndarray]:
+    """Extracts satellite position, velocity vectors, pointing quaternions, and geomagnetic coordinates."""
+    cspec_dir = DATA_DIR / FOLD_CSPEC_POS
+    pos_obj = PosHist.open(str(cspec_dir / file_pos))
+
+    met_ts = dic_data["met"]
+    time_filter = (met_ts >= pos_obj._times.min()) & (met_ts <= pos_obj._times.max())
+
+    for k in list(dic_data.keys()):
+        dic_data[k] = dic_data[k][time_filter]
+
+    met_aligned = dic_data["met"]
+
+    # Spacecraft position and attitude quaternions
+    pos_xyz = pos_obj.get_eic(met_aligned)
+    dic_data["pos_x"], dic_data["pos_y"], dic_data["pos_z"] = pos_xyz[0], pos_xyz[1], pos_xyz[2]
+
+    quats = pos_obj.get_quaternions(met_aligned)
+    dic_data["a"], dic_data["b"], dic_data["c"], dic_data["d"] = quats[0], quats[1], quats[2], quats[3]
+
+    dic_data["lat"] = pos_obj.get_latitude(met_aligned)
+    dic_data["lon"] = pos_obj.get_longitude(met_aligned)
+    dic_data["alt"] = pos_obj.get_altitude(met_aligned)
+
+    vel_xyz = pos_obj.get_velocity(met_aligned)
+    dic_data["vx"], dic_data["vy"], dic_data["vz"] = vel_xyz[0], vel_xyz[1], vel_xyz[2]
+
+    ang_vel = pos_obj.get_angular_velocity(met_aligned)
+    dic_data["w1"], dic_data["w2"], dic_data["w3"] = ang_vel[0], ang_vel[1], ang_vel[2]
+
+    # Solar and Earth occultation
+    dic_data["sun_vis"] = pos_obj.get_sun_visibility(met_aligned)
+    sun_pos = coords.get_sun_loc(met_aligned)
+    dic_data["sun_ra"], dic_data["sun_dec"] = sun_pos[0], sun_pos[1]
+
+    dic_data["earth_r"] = pos_obj.get_earth_radius(met_aligned)
+    earth_radec = pos_obj.get_geocenter_radec(met_aligned)
+    dic_data["earth_ra"], dic_data["earth_dec"] = earth_radec[0], earth_radec[1]
+
+    # Individual detector pointing and Earth limb visibility
+    for det in ["n0", "n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8", "n9", "na", "nb", "b0", "b1"]:
+        pointing = pos_obj.detector_pointing(det, met_aligned)
+        dic_data[f"{det}_ra"] = pointing[0]
+        dic_data[f"{det}_dec"] = pointing[1]
+        dic_data[f"{det}_vis"] = pos_obj.location_visible(pointing[0], pointing[1], met_aligned)
+
+    # Geomagnetic coordinates
+    dic_data["saa"] = pos_obj.get_saa_passage(met_aligned)
+    dic_data["l"] = pos_obj.get_mcilwain_l(met_aligned)
+
+    return dic_data

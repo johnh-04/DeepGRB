@@ -1,26 +1,78 @@
-# mae_0002 = [5.040, 5.800, 1.822, 5.093, 5.691, 1.784, 5.157, 5.849, 1.829, 5.327, 5.852, 1.801, 5.215, 5.750, 1.766,
-#           5.343, 5.837, 1.887, 5.401, 5.716, 1.816, 5.766, 5.929, 1.807, 5.748, 5.878, 1.827, 5.965, 6.076, 1.854,
-#           5.534, 5.921, 1.854, 4.953, 5.843, 1.852]
-#
-# mae_2 = [5.081, 5.798, 1.837, 5.095, 5.692, 1.792, 5.148, 5.890, 1.845, 5.408, 5.922, 1.815, 5.260, 5.804, 1.776,
-#             5.306, 5.849, 1.900, 5.460, 5.778, 1.829, 5.860, 5.994, 1.820, 5.840, 5.940, 1.835, 6.031, 6.126, 1.868,
-#             5.614, 5.958, 1.863, 4.994, 5.897, 1.864]
-#
+"""
+MAE and MeAE performance aggregator across various dropout configurations.
+Evaluates model summary text files exported during background neural network training.
+"""
 
+import logging
+from pathlib import Path
+from typing import Dict, List, Optional
 import pandas as pd
 
-mae_0002 = pd.read_csv("C:\\Users\\riccardo\\Downloads\\model_03-2019_07-2019_4.35_2023-06-02_do_0002.txt", sep=" ",
-                       header=None).loc[:, 14]
-mae_2 = pd.read_csv("C:\\Users\\riccardo\\Downloads\\model_03-2019_07-2019_4.38_2023-06-23_do_02.txt", sep=" ",
-                    header=None).loc[:, 14]
-mae_02 = pd.read_csv("C:\\Users\\riccardo\\Downloads\\model_03-2019_07-2019_4.41_2023-06-02_classic.txt", sep=" ",
-                      header=None).loc[:, 14]
-mae_002 = pd.read_csv("C:\\Users\\riccardo\\Downloads\\model_03-2019_07-2019_4.35_2023-05-26_do_002.txt", sep=" ",
-                      header=None).loc[:, 14]
+from connections.utils.config import DATA_DIR, FOLD_NN
 
-print("0.0002", mae_0002.mean(), mae_0002.std())
-print("0.2", mae_2.mean(), mae_2.std())
-print("0.02", mae_02.mean(), mae_02.std())
-print("0.002", mae_002.mean(), mae_002.std())
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 
+def parse_mae_file(filepath: Path) -> Optional[pd.Series]:
+    """
+    Parses detector-channel MAE/MeAE values from a training output report file.
+    Extracts the channel metrics reliably by inspecting whitespace-separated tokens.
+    """
+    if not filepath.exists():
+        logging.warning(f"Report file not found: {filepath}")
+        return None
+
+    try:
+        # Standard structure: each line reports metrics for one channel
+        # e.g., 'MAE train of n0_r0 : 5.040   MAE test of n0_r0 : 5.800 ...'
+        df_raw = pd.read_csv(filepath, sep=r"\s+", header=None, engine="python")
+        
+        # Identify the numeric column containing test metrics (column 14 in original Crupi format)
+        if df_raw.shape[1] >= 15:
+            # Drop NaN rows or non-numeric tokens
+            val_col = pd.to_numeric(df_raw.iloc[:, 14], errors="coerce").dropna()
+            return val_col
+        else:
+            logging.warning(f"Unexpected column count ({df_raw.shape[1]}) in {filepath}")
+            return None
+    except Exception as e:
+        logging.error(f"Failed parsing {filepath}: {e}")
+        return None
+
+
+def run_statistics(model_logs_dir: Optional[Path] = None) -> Dict[str, Dict[str, float]]:
+    """Aggregates and compares performance across dropout rates."""
+    target_dir = model_logs_dir or (DATA_DIR / FOLD_NN)
+    logging.info(f"Scanning directory for model summary reports: {target_dir}")
+
+    # Standard model configurations evaluated in Crupi et al.
+    model_patterns = {
+        "Dropout 0.0002": "*do_0002*.txt",
+        "Dropout 0.002":  "*do_002*.txt",
+        "Dropout 0.02":   "*do_02*.txt",
+        "Classic (0.05)": "*classic*.txt",
+        "Dropout 0.2":    "*do_2*.txt",
+    }
+
+    results: Dict[str, Dict[str, float]] = {}
+
+    for label, pattern in model_patterns.items():
+        matched_files = sorted(list(target_dir.glob(pattern)))
+        if not matched_files:
+            continue
+
+        series = parse_mae_file(matched_files[0])
+        if series is not None and not series.empty:
+            mean_val = float(series.mean())
+            std_val = float(series.std())
+            results[label] = {"mean": mean_val, "std": std_val}
+            print(f"[{label:16s}] Mean Test MAE: {mean_val:.4f} +/- {std_val:.4f}")
+
+    if not results:
+        logging.info("No matching dropout log reports found in directory. Check path or filenames.")
+
+    return results
+
+
+if __name__ == "__main__":
+    run_statistics()

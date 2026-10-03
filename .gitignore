@@ -149,13 +149,37 @@ cython_debug/
 # PyCharm
 .idea/
 
-# Datafiles
-data/bkg/
-data/pred
-data/trig/
+# Datafiles heavy
 data/cspec/
 data/*.pha
-data/nn_model/
-data/plots/
+data/*.fit
+data/*.fits
 data/poshist/
-data/results/
+data/bkg/
+data/pred/
+data/trig/
+data/plots/
+data/grb_classification/
+
+# Temp files and graphics in results
+data/results/*/data/
+data/results/*/plots/
+
+# Datafiles soft to keep for 2019 exe
+!data/*.csv
+!data/nn_model/
+!data/nn_model/**
+!data/results/
+!data/results/*/
+!data/results/*/*.csv
+
+# Datafiles Test
+data_test/bkg/
+data_test/pred
+data_test/trig/
+data_test/cspec/
+data_test/*.pha
+data_test/nn_model/
+data_test/plots/
+data_test/poshist/
+data_test/results/

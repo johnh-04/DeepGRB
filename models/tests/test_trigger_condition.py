@@ -1,56 +1,52 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
 from itertools import groupby
 from operator import itemgetter
+from typing import List, Tuple, Sequence
 
+from utils.keys import get_keys
 
-dets = [
-    'n0_r0',
-    'n0_r1',
-    'n1_r0',
-    'n1_r1',
-    'n2_r0',
-    'n2_r1',
+DET_NAMES = [
+    'n0_r0', 'n0_r1',
+    'n1_r0', 'n1_r1',
+    'n2_r0', 'n2_r1',
 ]
 
-KDETS = ('0', '1', '2')
-KRANGES = ('0', '1')
 
-
-def get_keys(ns=KDETS, rs=KRANGES):
+def fetch_triggers(
+    table: pd.DataFrame,
+    threshold: float,
+    min_dets_num: int = 2,
+    max_dets_num: int = 3,
+    active_dets: Sequence[str] = ('0', '1', '2')
+) -> List[Tuple[int, int]]:
     """
-    build lists like ['n1_r0', 'n3_r0']
-    :param ns: sequence representing dets
-    :param rs: sequence representing ranges
-    :return: list of strings
+    Estrae segmenti temporali (start, end) in cui un numero di rivelatori compreso
+    tra min_dets_num e max_dets_num supera la soglia di significatività specificata.
     """
-    out = ['n' + str(i) + '_r' + j for i in ns for j in rs]
-    return out
-
-def fetch_triggers(table, threshold, min_dets_num=2, max_dets_num=3):
-    '''
-    returns a list of the triggers objects
-    from focus fildata.
-    :param threshold:
-    :return:
-    '''
     out = {}
-    for i in ['0', '1', '2']:
-        table_ni = table[get_keys(ns=[i])]
-        out[i] = table_ni[table_ni > threshold].any(axis=1)
-    merged_ranges_df = pd.DataFrame(out)
-    dets_over_trig = merged_ranges_df[merged_ranges_df == True].count(axis=1)
-    data = dets_over_trig[dets_over_trig >= min_dets_num]
+    for det in active_dets:
+        keys = get_keys(ns=[det], rs=['0', '1'])
+        sub_table = table[keys]
+        out[det] = (sub_table > threshold).any(axis=1)
 
-    trig_segs = []
-    for k, g in groupby(enumerate(data.index), lambda ix: ix[0] - ix[1]):
-        tup = tuple(map(itemgetter(1), g))
-        start, end = tup[0], tup[-1] + 1 # changed right extrema
-        if (dets_over_trig[start:end + 1] < max_dets_num).all(): # <= now is <
+    merged_ranges_df = pd.DataFrame(out, index=table.index)
+    dets_over_trig = merged_ranges_df.sum(axis=1)
+    qualifying_points = dets_over_trig[dets_over_trig >= min_dets_num]
+
+    trig_segs: List[Tuple[int, int]] = []
+    for _, group in groupby(enumerate(qualifying_points.index), lambda ix: ix[0] - ix[1]):
+        indices = list(map(itemgetter(1), group))
+        start, end = indices[0], indices[-1] + 1
+        
+        # Condizione di veto su un numero eccessivo di rivelatori accesi contemporaneamente
+        if (dets_over_trig.loc[start:end] < max_dets_num).all():
             trig_segs.append((start, end))
+
     return trig_segs
 
 
+# --- Test fixtures ---
 testdataA = np.array([
     [0.0, 1.0, 0.0, 1.0, 0.0, 0.0],
     [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -62,151 +58,37 @@ testdataA = np.array([
     [5.1, 3.2, 5.1, 0.0, 0.0, 0.0],
     [5.1, 0.0, 5.1, 0.0, 0.0, 0.0],
     [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 5.1, 5.1,  5.1, 5.1],
+    [5.1, 5.1, 5.1, 5.1, 5.1, 5.1],
 ])
 
-testdata1 = testdataA
-pars1 = {
-    'threshold': 5,
-}
-results1 = (
-    (6,9),
-)
+testdataB = np.full((11, 6), 0.0)
+testdataB[:, :2] = 5.1
 
-testdata2 = testdataA
-pars2 = {
-    'threshold': 3,
-}
-results2 = (
-    (6,9),
-)
+testdataC = testdataB.copy()
+testdataC[0, :2] = np.nan
 
-testdata3 = testdataA
-pars3 = {
-    'threshold': 3,
-    'min_dets_num': 1,
-    'max_dets_num': 4,
-}
-results3 = (
-    (2,3),
-    (4,9),
-    (10,11)
-)
+testdataD = testdataB.copy()
+testdataD[4, :] = np.nan
 
-testdataB = np.array([
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-])
 
-testdata4 = testdataB
-pars4 = {
-    'threshold': 5,
-    'min_dets_num': 2,
-    'max_dets_num': 3,
-}
-results4 = ()
+def run_tests():
+    cases = [
+        ("Case 1", testdataA, {"threshold": 5}, ((6, 9),)),
+        ("Case 2", testdataA, {"threshold": 3}, ((6, 9),)),
+        ("Case 3", testdataA, {"threshold": 3, "min_dets_num": 1, "max_dets_num": 4}, ((2, 3), (4, 9), (10, 11))),
+        ("Case 4", testdataB, {"threshold": 5, "min_dets_num": 2, "max_dets_num": 3}, ()),
+        ("Case 5", testdataB, {"threshold": 5, "min_dets_num": 1}, ((0, 11),)),
+        ("Case 6", testdataC, {"threshold": 5, "min_dets_num": 1}, ((1, 11),)),
+        ("Case 7", testdataC, {"threshold": 5, "min_dets_num": 2}, ()),
+        ("Case 8", testdataD, {"threshold": 5, "min_dets_num": 1}, ((0, 4), (5, 11))),
+    ]
 
-testdata5 = testdataB
-pars5 = {
-    'threshold': 5,
-    'min_dets_num': 1,
-}
-results5 = (
-    (0, 11),
-)
+    for label, raw_arr, params, expected in cases:
+        df = pd.DataFrame(raw_arr, columns=DET_NAMES)
+        res = tuple(fetch_triggers(df, **params))
+        assert res == expected, f"{label} FAILED: got {res} instead of {expected}"
+        print(f"[{label}] PASSED")
 
-testdataC = np.array([
-    [np.nan, np.nan, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-])
-
-testdata6 = testdataC
-pars6 = {
-    'threshold': 5,
-    'min_dets_num': 1,
-}
-results6 = (
-    (1, 11),
-)
-
-testdata7 = testdataC
-pars7 = {
-    'threshold': 5,
-    'min_dets_num': 2,
-}
-results7 = ()
-
-testdataD = np.array([
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-    [5.1, 5.1, 0.0, 0.0, 0.0, 0.0],
-])
-
-testdata8 = testdataD
-pars8 = {
-    'threshold': 5,
-    'min_dets_num': 1,
-}
-results8 = (
-    (0, 4),
-    (5, 11),
-)
 
 if __name__ == '__main__':
-    df = pd.DataFrame(testdata1, columns = dets)
-    results = fetch_triggers(df, **pars1)
-    print("test passed: {}".format(tuple(results) == results1))
-
-    df = pd.DataFrame(testdata2, columns = dets)
-    results = fetch_triggers(df, **pars2)
-    print("test passed: {}".format(tuple(results) == results2))
-
-    df = pd.DataFrame(testdata3, columns = dets)
-    results = fetch_triggers(df, **pars3)
-    print("test passed: {}".format(tuple(results) == results3))
-
-    df = pd.DataFrame(testdata4, columns = dets)
-    results = fetch_triggers(df, **pars4)
-    print("test passed: {}".format(tuple(results) == results4))
-
-    df = pd.DataFrame(testdata5, columns = dets)
-    results = fetch_triggers(df, **pars5)
-    print("test passed: {}".format(tuple(results) == results5))
-
-    df = pd.DataFrame(testdata6, columns = dets)
-    results = fetch_triggers(df, **pars6)
-    print("test passed: {}".format(tuple(results) == results6))
-
-    df = pd.DataFrame(testdata7, columns = dets)
-    results = fetch_triggers(df, **pars7)
-    print("test passed: {}".format(tuple(results) == results7))
-
-    df = pd.DataFrame(testdata8, columns = dets)
-    results = fetch_triggers(df, **pars8)
-    print("test passed: {}".format(tuple(results) == results8))
+    run_tests()

@@ -1,26 +1,50 @@
-from connections.fermi_data_tools import df_burst_catalog_raw
-from models.utils.config import list_grb_table_col
 import logging
+from typing import Optional, Sequence
+import pandas as pd
+
+from connections.fermi_data_tools import df_burst_catalog_raw
+from models.utils.config import LIST_GRB_TABLE_COL
+
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 
-def df_burst_catalog(download=False, dropna=True, select_col=list_grb_table_col):
+def df_burst_catalog(
+    download: bool = False,
+    dropna: bool = True,
+    select_col: Sequence[str] = LIST_GRB_TABLE_COL
+) -> pd.DataFrame:
     """
-    :param download: boolean condition to donwload online or load the table offline
-    :param dropna: boolean condition to keep or not na wors in the dataset
-    :param select_col: columns to select
-    :return:
+    Loads and preprocesses the official Fermi GBM Burst Catalog.
+
+    :param download: If True, queries HEASARC online before loading; otherwise loads cached table.
+    :param dropna: If True, drops rows containing missing features; otherwise performs numeric imputation.
+    :param select_col: Sequence of column names to extract.
+    :return: Filtered pandas DataFrame.
     """
     try:
-        # Load table GRB GBM raw
         df_grb_raw = df_burst_catalog_raw(download=download)
+        if df_grb_raw.empty:
+            logging.warning("Raw GRB table is empty.")
+            return pd.DataFrame()
+
+        # Validate column presence
+        available_cols = [c for c in select_col if c in df_grb_raw.columns]
+        missing_cols = set(select_col) - set(available_cols)
+        if missing_cols:
+            logging.warning(f"Columns not found in catalog and skipped: {missing_cols}")
+
+        df_subset = df_grb_raw[available_cols].copy()
+
         if dropna:
-            # Drop rows if at least one NaN value
-            df_grb_raw = df_grb_raw.dropna(axis=0)
+            df_cleaned = df_subset.dropna(axis=0)
         else:
-            df_grb_raw = df_grb_raw.fillna(df_grb_raw.mean())
-        # Select the proper columns
-        df_grb = df_grb_raw[select_col]
-        return df_grb
+            # Safe numeric imputation avoiding non-numeric columns
+            numeric_cols = df_subset.select_dtypes(include=["number"]).columns
+            df_subset[numeric_cols] = df_subset[numeric_cols].fillna(df_subset[numeric_cols].mean())
+            df_cleaned = df_subset
+
+        return df_cleaned
+
     except Exception as e:
-        logging.error("Can't dropna, select columns in the table GRB GBM.")
-        logging.error(e)
+        logging.error(f"Error filtering and preparing GRB table: {e}")
+        return pd.DataFrame()
