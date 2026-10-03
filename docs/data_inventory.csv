@@ -121,12 +121,3 @@ date,yymmdd,cspec_nai,cspec_bgo,cspec_versions,poshist,bkg_csv,in_pred_frg,raw_c
 2019-06-28,190628,12,2,v00,1,True,True,True
 2019-06-29,190629,12,2,v00,1,True,True,True
 2019-06-30,190630,12,2,v00,1,True,True,True
-2019-07-01,190701,0,0,,0,False,False,False
-2019-07-02,190702,0,0,,0,False,False,False
-2019-07-03,190703,0,0,,0,False,False,False
-2019-07-04,190704,0,0,,0,False,False,False
-2019-07-05,190705,0,0,,0,False,False,False
-2019-07-06,190706,0,0,,0,False,False,False
-2019-07-07,190707,0,0,,0,False,False,False
-2019-07-08,190708,0,0,,0,False,False,False
-2019-07-09,190709,0,0,,0,False,False,False

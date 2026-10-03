@@ -11,7 +11,9 @@ and whether the day is covered by the prediction matrices (pred/frg_*.csv).
 Writes docs/DATA_INVENTORY.md and docs/data_inventory.csv. Never modifies data.
 
 Usage (from repo root):
-    python -m benchmark.audit.data_inventory [--start 2019-03-01] [--end 2019-07-09]
+    python -m benchmark.audit.data_inventory [--start YYYY-MM-DD] [--end YYYY-MM-DD]
+
+Defaults: START_DATE / END_DATE from connections/utils/config.py.
 """
 
 import argparse
@@ -20,6 +22,8 @@ from collections import defaultdict
 from pathlib import Path
 
 import pandas as pd
+
+from connections.utils.config import END_DATE, START_DATE
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = REPO_ROOT / "data"
@@ -134,8 +138,8 @@ def to_markdown(df: pd.DataFrame, start: str, end: str) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--start", default="2019-03-01")
-    parser.add_argument("--end", default="2019-07-09")
+    parser.add_argument("--start", default=START_DATE)
+    parser.add_argument("--end", default=END_DATE)
     args = parser.parse_args()
 
     df = build_inventory(args.start, args.end)

@@ -16,9 +16,11 @@ if BASE_DIR is None:
     BASE_DIR = CURRENT_FILE.parents[2]
 
 # Analysis window: explicit UTC calendar days, both ends included.
-# Shared by download and benchmark (Crupi et al. 2019 period).
+# Shared by download and benchmark. Crupi et al. cover 2019-03-01 -> 2019-07-09;
+# this baseline deliberately stops at 2019-06-30, so the 4 reference events of
+# July (2019_96..2019_99) are out of scope.
 START_DATE = "2019-03-01"
-END_DATE = "2019-07-09"
+END_DATE = "2019-06-30"
 
 # Root directories
 DATA_DIR = BASE_DIR / "data"

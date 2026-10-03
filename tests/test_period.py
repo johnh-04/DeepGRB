@@ -11,7 +11,7 @@ from utils.period import days_with_data, in_window, months_to_window, window_day
 class TestConfigWindow(unittest.TestCase):
     def test_config_defines_inclusive_crupi_window(self):
         self.assertEqual(cfg.START_DATE, "2019-03-01")
-        self.assertEqual(cfg.END_DATE, "2019-07-09")
+        self.assertEqual(cfg.END_DATE, "2019-06-30")
 
 
 class TestWindowDays(unittest.TestCase):

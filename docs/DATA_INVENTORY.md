@@ -1,20 +1,20 @@
 # Inventario copertura dati
 
-Finestra: 2019-03-01 → 2019-07-09 (inclusiva), 131 giorni. Generato da `python -m benchmark.audit.data_inventory` (sola lettura).
+Finestra: 2019-03-01 → 2019-06-30 (inclusiva), 122 giorni. Generato da `python -m benchmark.audit.data_inventory` (sola lettura).
 
 ## Riepilogo
 
 | Voce | Giorni |
 |---|---|
-| Dati grezzi completi (12 NaI + 2 BGO CSPEC + POSHIST) | 122 / 131 |
-| CSPEC NaI completi (12/12) | 122 / 131 |
-| POSHIST presente | 122 / 131 |
-| Tabella preprocessata `data/bkg/YYMMDD.csv` | 122 / 131 |
-| Presente in `pred/frg_03-2019_07-2019.csv` | 122 / 131 |
+| Dati grezzi completi (12 NaI + 2 BGO CSPEC + POSHIST) | 122 / 122 |
+| CSPEC NaI completi (12/12) | 122 / 122 |
+| POSHIST presente | 122 / 122 |
+| Tabella preprocessata `data/bkg/YYMMDD.csv` | 122 / 122 |
+| Presente in `pred/frg_03-2019_07-2019.csv` | 122 / 122 |
 
 ## Buchi
 
-- Giorni senza dati grezzi completi (9): 2019-07-01, 2019-07-02, 2019-07-03, 2019-07-04, 2019-07-05, 2019-07-06, 2019-07-07, 2019-07-08, 2019-07-09
+- Giorni senza dati grezzi completi (0): nessuno
 - Grezzi completi ma senza `bkg` (0): nessuno
 - Con `bkg` ma assenti da `pred/frg` (0): nessuno
 
@@ -144,12 +144,3 @@ Finestra: 2019-03-01 → 2019-07-09 (inclusiva), 131 giorni. Generato da `python
 | 2019-06-28 | 12/12 | 2/2 | v00 | 1 | sì | sì | sì |
 | 2019-06-29 | 12/12 | 2/2 | v00 | 1 | sì | sì | sì |
 | 2019-06-30 | 12/12 | 2/2 | v00 | 1 | sì | sì | sì |
-| 2019-07-01 | 0/12 | 0/2 | - | 0 | **no** | **no** | **no** |
-| 2019-07-02 | 0/12 | 0/2 | - | 0 | **no** | **no** | **no** |
-| 2019-07-03 | 0/12 | 0/2 | - | 0 | **no** | **no** | **no** |
-| 2019-07-04 | 0/12 | 0/2 | - | 0 | **no** | **no** | **no** |
-| 2019-07-05 | 0/12 | 0/2 | - | 0 | **no** | **no** | **no** |
-| 2019-07-06 | 0/12 | 0/2 | - | 0 | **no** | **no** | **no** |
-| 2019-07-07 | 0/12 | 0/2 | - | 0 | **no** | **no** | **no** |
-| 2019-07-08 | 0/12 | 0/2 | - | 0 | **no** | **no** | **no** |
-| 2019-07-09 | 0/12 | 0/2 | - | 0 | **no** | **no** | **no** |
