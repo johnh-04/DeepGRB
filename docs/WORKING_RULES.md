@@ -5,10 +5,10 @@
 
 ## 0. Obiettivo
 
-Far sì che `pipeline/pipeline_bkg.py` **riproduca, in modo verificabile e privo di errori logici**, i risultati del paper di Crupi et al. (Exp. Astron. 56:421, 2023; tesi arXiv:2401.15632) sul periodo **1 marzo – 9 luglio 2019**:
+Far sì che `pipeline/pipeline_bkg.py` **riproduca, in modo verificabile e privo di errori logici**, i risultati del paper di Crupi et al. (Exp. Astron. 56:421, 2023; tesi arXiv:2401.15632) sul periodo **1 marzo – 30 giugno 2019** (il paper arriva al 9 luglio; per decisione del 2026-10-03 la baseline si ferma al 30 giugno, vedi §3):
 
-1. gli eventi **noti**, cioè presenti nel catalogo trigger ufficiale Fermi-GBM (74 righe nella Tabella 11 del paper);
-2. gli eventi **inediti**, cioè non presenti nel catalogo GBM (25 righe nella Tabella 10 del paper).
+1. gli eventi **noti**, cioè presenti nel catalogo trigger ufficiale Fermi-GBM (74 righe nella Tabella 11 del paper, **71** entro il 30 giugno);
+2. gli eventi **inediti**, cioè non presenti nel catalogo GBM (25 righe nella Tabella 10 del paper, **24** entro il 30 giugno).
 
 Questa sarà la **base fidata** da cui partire per i dati 2024 (picco Ciclo Solare 25). Per ora **non** si lavora su XGBoost né sul 2024.
 
@@ -32,7 +32,12 @@ Pipeline (cache a ogni step: se l'output esiste lo step viene saltato):
 6. classificazione (`models/event_classifier.py`, `CrupiEventClassifier`)
 7. localizzazione PSO + benchmark (`models/localize_event.py`, `benchmark/validate_results.py`)
 
-Parametri del paper da rispettare (verifica che il codice li usi davvero): soglia T = 3σ in r1 su almeno 1 rivelatore; `dmax` = 120.4 s, `mu_min` = 1.2; clustering < 600 s; esclusione di ±150 s attorno a ogni passaggio in SAA di durata ≥ 500 s; bin 4.096 s; training senza SAA e senza intervalli dei trigger GBM; una rete per periodo; significatività evento S = (N−B)/√B con N e B integrati sull'intervallo dell'evento e sui rivelatori scattati, e solo sui conteggi sopra una soglia basata su quantile (nota 2 del paper); consistency C = max(S_r0, S_r1, S_r2).
+Parametri del paper da rispettare (verifica che il codice li usi davvero; per le tre discrepanze tra testo del paper e codice upstream vedi le **decisioni** subito sotto): soglia T = 3σ in r1 su almeno 1 rivelatore; `dmax` = 120.4 s, `mu_min` = 1.2; clustering < 600 s; esclusione di ±150 s attorno a ogni passaggio in SAA di durata ≥ 500 s; bin 4.096 s; training senza SAA e senza intervalli dei trigger GBM; una rete per periodo; significatività evento S = (N−B)/√B con N e B integrati sull'intervallo dell'evento e sui rivelatori scattati, e solo sui conteggi sopra una soglia basata su quantile (nota 2 del paper); consistency C = max(S_r0, S_r1, S_r2).
+
+**Decisioni sulle discrepanze paper ↔ codice upstream (2026-10-03, prese durante il lavoro e approvabili da Giovanni):** in tutti e tre i casi il codice upstream, cioè quello che ha prodotto i risultati del paper, differisce dal testo. Poiché l'obiettivo è **riprodurre i risultati**, si segue il **codice upstream**, si documenta la discrepanza e, se utile, se ne misura l'effetto come analisi di sensibilità (senza usarla per tarare):
+1. **Ingresso a FOCuS:** rate (conteggi/s, `lightcurve.rates`), come upstream; non conteggi per bin.
+2. **Esclusione SAA:** ±150 **bin** (≈ ±614 s) attorno ai buchi > 500 s, come upstream (`time_to_del=150`); non ±150 s.
+3. **`t_max` di FOCuS:** 50 bin (204.8 s), come upstream; non `dmax` = 120.4 s.
 
 Il repo upstream è `github.com/rcrupi/DeepGRB`. Usalo come riferimento: aggiungilo come remote `upstream` e fai il diff dei file chiave (`models/trigger.py`, `models/analyze.py`, `models/trigs/focus.py`, `models/model_nn.py`, `models/preprocess.py`) rispetto al nostro fork. Ogni differenza deve essere classificata come **intenzionale** (porting Keras 3 / Pandas 2 / HPC) oppure **regressione**.
 
@@ -47,7 +52,7 @@ Colonne: `n,id,starred,trigger_time_utc,duration_s,detectors,catalog_name,S_r0,S
 
 Attenzione a tre punti:
 
-- **Finestra temporale:** il paper copre 2019-03-01 → 2019-07-09. 4 eventi di riferimento cadono dopo il 30 giugno (`2019_96` del 2019-07-02, `2019_97`, `2019_98`, `2019_99` del 7–8 luglio). La nostra pipeline oggi si ferma al 30 giugno: quei 4 eventi sono **irriproducibili** finché i dati non coprono il 9 luglio.
+- **Finestra temporale (decisione 2026-10-03):** il paper copre 2019-03-01 → 2019-07-09, la baseline si ferma al **2019-06-30** (`START_DATE`/`END_DATE` in `connections/utils/config.py`). I 4 eventi di riferimento di luglio sono **fuori ambito** e si escludono dai denominatori: `2019_96` (inedito, P, 2019-07-02), `2019_97` e `2019_98` (noti, R, 7 luglio), `2019_99` (noto, S, 8 luglio). In finestra restano **71 noti** (62 R, 3 S, 6 P) e **24 inediti** (13 R, 3 S, 8 P).
 - **Conteggio:** le tabelle contengono 99 righe (74+25); il testo del paper dice 100 eventi (uno è un artefatto non in tabella).
 - **Due verità diverse, da non mescolare:**
   - **A. Catalogo ufficiale GBM** (`data/gbm_trig_catalog.csv`, `gbm_burst_catalog.db`): tutti i tipi di trigger (GRB, SFLARE, TGF, LOCLPAR…) nella finestra. Misura quanto troviamo di ciò che Fermi ha già visto.
@@ -89,11 +94,11 @@ FOCuS riceve *rate* (conteggi/s) invece di conteggi per bin. Con statistica di P
 
 ### 5.5 Finestra temporale e denominatore del FAR
 `END_MONTH="07-2019"` è un limite esclusivo per il download (dati fino al 30 giugno) ma il benchmark aggiunge un mese e usa 153 giorni con 177 eventi di verità, includendo luglio senza dati. Gonfia i FN e sgonfia il FAR.
-**Fix:** definisci date esplicite inclusive (`START_DATE=2019-03-01`, `END_DATE=2019-07-09`) in `connections/utils/config.py`, usate sia da download che da benchmark. Il FAR si calcola su giorni con dati validi realmente presenti.
+**Fix:** definisci date esplicite inclusive (`START_DATE=2019-03-01`, `END_DATE=2019-06-30`) in `connections/utils/config.py`, usate sia da download che da benchmark. Il FAR si calcola su giorni con dati validi realmente presenti. **Fatto in Fase 1.**
 
 ### 5.6 Download da zero rotto
 `download_spec` restituisce `id/tStart` ma la pipeline cerca la colonna `day`; senza di essa usa l'indice 0..N e i controlli di retry fanno glob su `*0*`.
-**Fix:** colonna `day` esplicita (formato `YYMMDD`); retry per giorno e per file; verifica finale che per ogni giorno della finestra esistano CSPEC (12 NaI) e POSHIST; log dei giorni mancanti.
+**Fix:** colonna `day` esplicita (formato `YYMMDD`); retry per giorno e per file; verifica finale che per ogni giorno della finestra esistano CSPEC (12 NaI) e POSHIST; log dei giorni mancanti. **Fatto in Fase 1.**
 
 ### 5.7 Modello salvato non ricaricabile, scaler non persistito
 `train(bool_train=False)` cerca `model_03-2019_07-2019.keras` ma su disco c'è `model_..._4.4_2026-09-21.h5`; lo scaler viene ricalcolato sui dati correnti.
@@ -116,8 +121,8 @@ FOCuS riceve *rate* (conteggi/s) invece di conteggi per bin. Con statistica di P
 - **Accettazione:** WORKLOG avviato, DIFF_UPSTREAM e inventario scritti, nulla di funzionale cambiato.
 
 ### Fase 1 — Finestra dati
-- Implementa §5.5 e §5.6; scarica i giorni mancanti (1–9 luglio 2019 e qualunque buco).
-- **Accettazione:** l'inventario mostra copertura completa fino al 9 luglio; il download è idempotente (una seconda esecuzione non scarica nulla).
+- Implementa §5.5 e §5.6; scarica i giorni mancanti (qualunque buco entro il 30 giugno 2019).
+- **Accettazione:** l'inventario mostra copertura completa fino al 30 giugno; il download è idempotente (una seconda esecuzione non scarica nulla). **Accettata il 2026-10-03** (122/122 giorni; vedi `docs/WORKLOG.md`).
 
 ### Fase 2 — Correttezza del motore
 - Implementa §5.1, §5.3, §5.4, §5.7 (il training/riaddestramento richiede la mia conferma), con i test della regola 7.
@@ -133,10 +138,10 @@ Matching **uno-a-uno** (un evento ↔ al massimo un riferimento e viceversa), ma
 - **Eventi nostri senza controparte** (né GBM né Crupi): tabella dedicata, mai chiamati "scoperte". Per i due casi del §1 spiega esplicitamente la causa.
 - **Stabilità:** riporta quanto varia l'insieme degli eventi tra almeno 2 seed del training (se la mia conferma permette il riaddestramento); gli eventi P (singolo rivelatore, singola banda, S_r1 ≈ 3–5) sono i più sensibili.
 - **Accettazione (obiettivi, non soglie da forzare):**
-  - ≥ 90% degli eventi noti di Crupi (≥ 67/74) ritrovati; tutti gli R e S noti ritrovati salvo diagnosi motivata;
-  - ≥ 90% degli inediti R+S (≥ 15/16) ritrovati;
-  - ≥ 70% degli inediti complessivi (≥ 18/25) ritrovati, con i P mancanti spiegati;
-  - recall GRB con T90 > 4.096 s dell'ordine dell'88% e con T90 < 4.096 s dell'ordine del 34%;
+  - ≥ 90% degli eventi noti di Crupi in finestra (≥ 64/71) ritrovati; tutti gli R e S noti (65) ritrovati salvo diagnosi motivata;
+  - ≥ 90% degli inediti R+S in finestra (≥ 15/16) ritrovati;
+  - ≥ 70% degli inediti complessivi in finestra (≥ 17/24) ritrovati, con i P mancanti spiegati;
+  - recall GRB con T90 > 4.096 s dell'ordine dell'88% e con T90 < 4.096 s dell'ordine del 34% (cifre del paper sull'intera finestra fino al 9 luglio: confronto di ordine di grandezza);
   - numero totale di eventi nostri dell'ordine di 100 ± qualche decina; se è molto più alto (per esempio 144, o circa 177) indaga clustering e unità prima di andare avanti.
   Se non sono raggiunti: **diagnosi per evento** (fondo stimato, σ, SAA, clustering), non ritocco dei parametri.
 
