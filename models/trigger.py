@@ -1,106 +1,87 @@
 """
-Multi-core trigger execution engine.
-Applies the Poisson-FOCuS sequential change-point algorithm concurrently across all 36 detector-energy channels.
+Runs the Poisson-FOCuS change-point search on every detector-range channel.
+
+Inputs are the observed (frg) and predicted (bkg) rate matrices written by
+ModelNN.predict; they are read only. Missing or non-positive cells reach FOCuS
+as NaN background, which resets its change-point curves (SAA edges, gaps).
 """
 
 import logging
 import os
 from pathlib import Path
 from typing import Callable, Optional, Tuple
-from joblib import Parallel, delayed
-import pandas as pd
 
-from connections.utils.config import DATA_DIR, FOLD_PRED, FOLD_TRIG
+import numpy as np
+import pandas as pd
+from joblib import Parallel, delayed
+
 from utils.keys import get_keys
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
+MAX_WORKERS = 4  # safe on ReCaS nodes (4 vCPU / 16 GB)
 
-def _get_available_cpus() -> int:
-    """Detects allocated CPU cores respecting Slurm and cgroup affinity constraints."""
+
+def _available_cpus() -> int:
     try:
         return len(os.sched_getaffinity(0))
     except (AttributeError, NotImplementedError):
         return os.cpu_count() or 1
 
 
-def _process_single_key(
-    key: str,
-    fermi_series: pd.Series,
-    pred_series: pd.Series,
-    trigger_func: Callable,
-) -> Tuple[str, list, list]:
-    """Worker task scanning a single detector-energy channel with Poisson-FOCuS."""
-    logging.info(f"Poisson-FOCuS processing channel: {key}")
-    out, out_offset = trigger_func(fermi_series, pred_series)
+def focus_inputs(x: pd.Series, b: pd.Series) -> Tuple[np.ndarray, np.ndarray]:
+    """Observed and background arrays for FOCuS; the background is NaN wherever either value is missing or <= 0."""
+    x = x.to_numpy(dtype=float)
+    b = b.to_numpy(dtype=float).copy()
+    invalid = ~np.isfinite(x) | ~np.isfinite(b) | (x <= 0) | (b <= 0)
+    b[invalid] = np.nan
+    return x, b
+
+
+def _run_channel(key: str, x: np.ndarray, b: np.ndarray, trigger_func: Callable) -> Tuple[str, list, list]:
+    out, out_offset = trigger_func(x, b)
     return key, out, out_offset
 
 
 def run_trigger(
-    start_month: str,
-    end_month: str,
+    frg_path: Path,
+    bkg_path: Path,
+    trig_path: Path,
+    offset_path: Path,
     trigger_func: Callable,
     n_jobs: Optional[int] = None,
 ) -> pd.DataFrame:
     """
-    Executes Poisson-FOCuS trigger detection over observed and predicted background series.
-
-    :param start_month: Start month format 'MM-YYYY'
-    :param end_month: End month format 'MM-YYYY'
-    :param trigger_func: Configured trigger runner (e.g. from models.trigs.focus)
-    :param n_jobs: Number of CPU workers (hard-capped to 4 to prevent HPC node memory exhaustion)
-    :return: DataFrame containing significance scores per channel
+    Computes FOCuS significance and change-point offset for the 36 channels and
+    writes them to trig_path / offset_path (new files only).
     """
-    # Safe multi-core allocation policy on ReCaS HPC nodes
-    MAX_WORKERS = 4
-    detected_cpus = _get_available_cpus()
-    num_workers = min(n_jobs or detected_cpus, MAX_WORKERS)
-    logging.info(f"Available CPUs: {detected_cpus}. Operating with SAFE_MAX_WORKERS = {num_workers}")
-
-    pred_dir = DATA_DIR / FOLD_PRED
-    frg_file = pred_dir / f"frg_{start_month}_{end_month}.csv"
-    bkg_file = pred_dir / f"bkg_{start_month}_{end_month}.csv"
-
-    fermi_data = pd.read_csv(frg_file)
-    nn_pred = pd.read_csv(bkg_file)
-
-    # Sanitize zero values to prevent log-likelihood divergences in Poisson-FOCuS
-    zero_mask = (fermi_data == 0).any(axis=1) | (nn_pred == 0).any(axis=1)
-    if zero_mask.any():
-        logging.warning("Excising zero-count observations (assigned to NaN) to preserve statistical validity.")
-        fermi_data.loc[zero_mask, nn_pred.columns] = None
-        nn_pred.loc[zero_mask, nn_pred.columns] = None
+    trig_path, offset_path = Path(trig_path), Path(offset_path)
+    for p in (trig_path, offset_path):
+        if p.exists():
+            raise FileExistsError(f"Refusing to overwrite {p}")
+        p.parent.mkdir(parents=True, exist_ok=True)
 
     keys = get_keys()
-    dct_res = {}
-    dct_offset = {}
+    frg = pd.read_csv(frg_path, usecols=keys)
+    bkg = pd.read_csv(bkg_path, usecols=keys)
+    if len(frg) != len(bkg):
+        raise ValueError(f"frg ({len(frg)}) and bkg ({len(bkg)}) have different lengths")
 
-    if num_workers > 1:
-        results = Parallel(n_jobs=num_workers, backend="loky")(
-            delayed(_process_single_key)(k, fermi_data[k].values, nn_pred[k].values, trigger_func)
-            for k in keys
+    inputs = {k: focus_inputs(frg[k], bkg[k]) for k in keys}
+    n_invalid = sum(int(np.isnan(b).sum()) for _, b in inputs.values())
+    logging.info(f"FOCuS inputs: {len(frg)} bins x {len(keys)} channels, {n_invalid} invalid cells passed as NaN")
+
+    workers = min(n_jobs or _available_cpus(), MAX_WORKERS)
+    if workers > 1:
+        results = Parallel(n_jobs=workers, backend="loky")(
+            delayed(_run_channel)(k, *inputs[k], trigger_func) for k in keys
         )
-        for k, out, out_offset in results:
-            dct_res[k] = out
-            dct_offset[k] = out_offset
     else:
-        for k in keys:
-            _, out, out_offset = _process_single_key(k, fermi_data[k].values, nn_pred[k].values, trigger_func)
-            dct_res[k] = out
-            dct_offset[k] = out_offset
+        results = [_run_channel(k, *inputs[k], trigger_func) for k in keys]
 
-    focus_res = pd.DataFrame(dct_res)
-    focus_offset = pd.DataFrame(dct_offset)
-
-    trig_dir = DATA_DIR / FOLD_TRIG
-    trig_dir.mkdir(parents=True, exist_ok=True)
-
-    trig_path = trig_dir / f"trig_{start_month}_{end_month}.csv"
-    offset_path = trig_dir / f"offset_{start_month}_{end_month}.csv"
-
-    # Save significance tables
+    focus_res = pd.DataFrame({k: out for k, out, _ in results})[keys]
+    focus_offset = pd.DataFrame({k: off for k, _, off in results})[keys]
     focus_res.to_csv(trig_path, index=False)
     focus_offset.to_csv(offset_path, index=False)
-    logging.info(f"Trigger tables saved to: {trig_path} and {offset_path}")
-
+    logging.info(f"Wrote {trig_path} and {offset_path}")
     return focus_res
