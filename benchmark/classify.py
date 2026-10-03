@@ -39,6 +39,9 @@ def main() -> None:
     clf = CrupiEventClassifier(features)
     clf.prepare_features()
     y = clf.apply_classification_logic()
+    # one flag per rule (Crupi evaluated each rule one-vs-rest) and the single-label convention
+    for label in ["GRB", "TGF", "SF", "UNC(LP)", "GF"]:
+        events[f"rule_{label}"] = y[label].astype(bool).values
     events["predicted_class"] = y["predicted_class"].values
     events.to_csv(res / "events_classified.csv", index=False)
     print(events["predicted_class"].value_counts().to_string())

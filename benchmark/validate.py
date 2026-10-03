@@ -228,38 +228,64 @@ def git_commit() -> str:
         return "unknown"
 
 
+RULE_CLASSES = ["GRB", "SF", "TGF", "UNC(LP)", "GF"]
+
+
 def classification_section(rd: RunData, known: pd.DataFrame, unknown: pd.DataFrame, out: Path) -> List[str]:
     path = rd.run / "results" / "events_classified.csv"
+    intro = [
+        "Il classificatore è la **baseline euristica** di Crupi, da superare con un modello appreso (XGBoost, fase successiva). "
+        "Le regole vengono dalla \"manual classification logic\" di `pipeline/script_classification2.py` (upstream, 2023): "
+        "soglie lette da decision tree uno-contro-resto (profondità 3) e rifinite a mano sul catalogo etichettato 2010-11, 2014, 2019; "
+        "le random forest servivano allo studio delle feature, non come classificatore finale.",
+        "",
+        "Differenze rispetto alle regole originali: mancano la regola FP e le feature `fe_*` della curva di luce (calcolate con `tsfel` "
+        "nel branch upstream `ric_review_28062023`), quindi i termini `fe_wet > 2.054` (GRB) e `fe_skw <= 0.345` (UNC(LP)) sono neutri. "
+        "Le regole sono valutate solo sugli eventi abbinati a Crupi (gli eventi senza controparte non hanno una classe di riferimento).",
+        "",
+    ]
     if not path.exists():
-        return ["_Tabella classificata assente (`events_classified.csv`): eseguire `python -m benchmark.classify`._"]
-    cls = pd.read_csv(path)
-    lines = []
+        return intro + ["_Tabella classificata assente (`events_classified.csv`): eseguire `python -m benchmark.classify`._"]
+    cls = pd.read_csv(path).set_index("trig_ids")
     rows = []
     for kind, ref in (("noti", known), ("inediti", unknown)):
         for _, r in ref[ref["matched"]].iterrows():
-            truth = crupi_class(r["catalog_name"])
-            pred = cls.loc[cls["trig_ids"] == rd.events.at[r["event"], "trig_ids"], "predicted_class"]
-            rows.append({"set": kind, "id": r["id"], "crupi_class": "/".join(sorted(truth)),
-                         "predicted_class": pred.iloc[0] if len(pred) else "", "correct": (pred.iloc[0] in truth) if len(pred) else False})
+            tid = rd.events.at[r["event"], "trig_ids"]
+            row = {"set": kind, "id": r["id"], "crupi_class": "/".join(sorted(crupi_class(r["catalog_name"]))),
+                   "predicted_class": cls.at[tid, "predicted_class"]}
+            for c in RULE_CLASSES:
+                row[f"rule_{c}"] = bool(cls.at[tid, f"rule_{c}"]) if f"rule_{c}" in cls.columns else np.nan
+            rows.append(row)
     df = pd.DataFrame(rows)
     df.to_csv(out / "classification_vs_crupi.csv", index=False)
     if df.empty:
-        return ["_Nessun evento abbinato da classificare._"]
+        return intro + ["_Nessun evento abbinato da classificare._"]
+
+    truth = df["crupi_class"].str.split("/")
+    ovr = []
+    for c in RULE_CLASSES:
+        if f"rule_{c}" not in df.columns:
+            continue
+        t = truth.apply(lambda s: c in s)
+        pr = df[f"rule_{c}"].astype(bool)
+        tp, fp, fn = int((t & pr).sum()), int((~t & pr).sum()), int((t & ~pr).sum())
+        ovr.append({"regola": c, "positivi Crupi": int(t.sum()), "flag regola": int(pr.sum()), "TP": tp, "FP": fp, "FN": fn,
+                    "precision": tp / (tp + fp) if tp + fp else np.nan, "recall": tp / (tp + fn) if tp + fn else np.nan})
+
     single = df[~df["crupi_class"].str.contains("/")]
     labels = sorted(set(single["crupi_class"]) | set(single["predicted_class"]))
     cm = pd.crosstab(pd.Categorical(single["crupi_class"], categories=labels),
                      pd.Categorical(single["predicted_class"], categories=labels), dropna=False)
     cm.index.name, cm.columns.name = "Crupi", "predetta"
-    per_class = []
-    for c in labels:
-        tp = int(((single["crupi_class"] == c) & (single["predicted_class"] == c)).sum())
-        p = int((single["predicted_class"] == c).sum())
-        t = int((single["crupi_class"] == c).sum())
-        per_class.append({"classe": c, "veri": t, "predetti": p, "corretti": tp,
-                          "precision": tp / p if p else np.nan, "recall": tp / t if t else np.nan})
-    lines += [
-        f"Eventi abbinati classificati: {len(df)}; corretti (classe predetta tra quelle tentative di Crupi): "
-        f"{int(df['correct'].sum())}/{len(df)} ({100 * df['correct'].mean():.1f}%).",
+    correct = df.apply(lambda r: r["predicted_class"] in r["crupi_class"].split("/"), axis=1)
+    return intro + [
+        f"### Per regola, uno-contro-resto (come nello script di Crupi) — {len(df)} eventi abbinati",
+        "",
+        md_table(pd.DataFrame(ovr)),
+        "",
+        "### Etichetta singola (nostra convenzione di priorità: GRB, TGF, SF, UNC(LP), GF, UNC)",
+        "",
+        f"Classe predetta tra quelle tentative di Crupi: {int(correct.sum())}/{len(df)} ({100 * correct.mean():.1f}%).",
         "",
         f"Matrice di confusione sugli eventi con classe Crupi univoca ({len(single)}):",
         "",
@@ -267,11 +293,9 @@ def classification_section(rd: RunData, known: pd.DataFrame, unknown: pd.DataFra
         cm.to_string(),
         "```",
         "",
-        md_table(pd.DataFrame(per_class)),
-        "",
-        "Leakage: il test `tests/test_classifier.py::test_catalog_does_not_change_prediction` verifica che azzerare le colonne del catalogo non cambi `predicted_class`.",
+        "Leakage: `tests/test_classifier.py::test_catalog_does_not_change_prediction` verifica che le colonne del catalogo non cambino "
+        "la classe; `TestRulesMatchCrupi` verifica che i flag coincidano con la trascrizione delle regole di Crupi.",
     ]
-    return lines
 
 
 def crupi_class(name: str) -> set:
@@ -492,7 +516,7 @@ def main() -> None:
         "## Limiti noti",
         "",
         "- Stabilità rispetto al seed di training non misurata (richiede un nuovo training: da confermare).",
-        "- Le feature `fe_wet`/`fe_skw` del classificatore non vengono calcolate (valori costanti); la regola TGF (durata < 0.2 s) non può scattare con bin da 4.096 s.",
+        "- Classificatore: mancano la regola FP e le feature `fe_*` (tsfel, branch upstream `ric_review_28062023`): i termini che le usano sono neutri.",
         "- Il paper conta fino al 9 luglio; i numeri del paper sono confronti di ordine di grandezza.",
         "",
     ]

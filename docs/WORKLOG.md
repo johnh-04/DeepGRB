@@ -183,3 +183,34 @@ Uno-a-uno (assegnazione greedy per distanza). Un riferimento è abbinato se il s
 - `docs/BASELINE.md`: comandi, tempi misurati, formato della cache, come lanciare un altro periodo (`DEEPGRB_START_DATE`/`DEEPGRB_END_DATE`; training solo con `DEEPGRB_ALLOW_TRAINING=1`).
 - Riproducibilità: rieseguendo `benchmark.validate` le tabelle CSV sono identiche byte per byte.
 - Tag `baseline-2019-validated`: **non creato**. I criteri di recall sono raggiunti, quello sul numero di eventi no (diagnosticato sopra): la decisione spetta a Giovanni.
+
+---
+
+## 2026-10-03 — Fase 4, revisione: provenienza delle regole e baseline per XGBoost
+
+### Provenienza (verificata sul codice upstream)
+- Le regole sono la "manual classification logic" di `pipeline/script_classification2.py` (upstream, agosto–settembre 2023).
+- Nello stesso script: decision tree uno-contro-resto di profondità 3, disegnati con `plot_tree` (le soglie con 2–3 decimali, come 0.392, 63.49, 2.054, 0.345, hanno la forma dei loro split); un blocco commentato si intitola "rule from Decision Tree"; molte varianti di soglie commentate (rifinitura manuale).
+- Le random forest (multiclasse e uno-contro-tutti, 200 alberi, profondità 4, selezione L1 con LinearSVC, spiegazioni Anchor) servivano per l'importanza delle feature e come confronto, non come classificatore.
+- Nessun output salvato collega ogni soglia a un albero specifico: "derivate da DT e rifinite a mano" è quanto si può affermare.
+- Il capitolo 5.4 della tesi (arXiv:2401.15632) non era leggibile nella versione HTML.
+
+### Correzioni
+- Regola TGF ripristinata: `(non visibile) | (distanza dalla Terra < 80°)`. Il fork richiedeva durata < 0.2 s, irraggiungibile con bin da 4.096 s.
+- Regola UNC(LP): ripristinata la condizione alternativa sull'incertezza di localizzazione. Crupi usava `max(ra_std, dec_std) > 100` sulla varianza, quindi qui la soglia è 10° sulla deviazione standard.
+- Test `TestRulesMatchCrupi`: i flag coincidono con la trascrizione delle regole di Crupi (falliscono sul codice precedente).
+- `benchmark/classify` salva un flag per regola (`rule_*`). Il report riporta le metriche uno-contro-resto, come nello script di Crupi.
+- Classificazione precedente archiviata in `data/_archive_20261003/classification_before_rule_fix/`.
+
+### Risultati (91 eventi abbinati, uno-contro-resto)
+- GRB: precision 0.91, recall 0.97 (72/74).
+- SF: 0.83 / 0.83.
+- TGF: 0.33 / 0.33.
+- UNC(LP): 0.53 / 0.80.
+- GF: 0/2 (15 flag, tutti sbagliati).
+- Etichetta singola compatibile con Crupi: 79/91.
+
+### Per XGBoost (Fase 6 in docs/WORKING_RULES.md)
+- Mancano ancora la regola FP e le feature `fe_*`. Sono calcolate con `tsfel` nel branch upstream `ric_review_28062023` (`models/localize_event.py`): curva di luce media dei rivelatori scattati, ±64 s, normalizzata min-max, wavelet con larghezze 1–9.
+- `tsfel` e `xgboost` non sono installati nell'env.
+- Etichette disponibili: 324 eventi di Crupi (2010-11: 73, 2014: 152, 2019: 99). Servono le run del motore anche su 2010-11 e 2014.

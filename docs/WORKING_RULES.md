@@ -10,7 +10,7 @@ Far sì che `pipeline/pipeline_bkg.py` **riproduca, in modo verificabile e privo
 1. gli eventi **noti**, cioè presenti nel catalogo trigger ufficiale Fermi-GBM (74 righe nella Tabella 11 del paper, **71** entro il 30 giugno);
 2. gli eventi **inediti**, cioè non presenti nel catalogo GBM (25 righe nella Tabella 10 del paper, **24** entro il 30 giugno).
 
-Questa sarà la **base fidata** da cui partire per i dati 2024 (picco Ciclo Solare 25). Per ora **non** si lavora su XGBoost né sul 2024.
+Questa sarà la **base fidata** da cui partire per i dati 2024 (picco Ciclo Solare 25) e per il classificatore XGBoost della tesi (Fase 6, che parte solo su richiesta di Giovanni).
 
 **Definizione di "fatto":** un solo comando rigenera da zero, in modo deterministico, `benchmark/out/REPORT.md` con tutte le metriche calcolate dal codice (nessun numero scritto a mano), e i criteri di accettazione della §6 sono soddisfatti oppure ogni scostamento è diagnosticato evento per evento.
 
@@ -147,8 +147,16 @@ Matching **uno-a-uno** (un evento ↔ al massimo un riferimento e viceversa), ma
 
 ### Fase 4 — Classificazione (solo baseline onesta)
 - Con σ corrette e senza leakage, valuta `CrupiEventClassifier` contro le classi tentative dei CSV di Crupi (SF, GRB, GF, TGF, UNC(LP)), agganciate per tempo. Confusion matrix, precision/recall per classe, calcolate dal codice.
-- **Fuori ambito ora:** XGBoost, 2024, riaddestramento del classificatore.
-- **Accettazione:** matrice senza leakage (verifica con un test che azzera il catalogo e controlla che `predicted_class` non cambi).
+- **Provenienza delle regole (verificata 2026-10-03):** sono la "manual classification logic" di Crupi in `pipeline/script_classification2.py` (upstream). Le soglie sono state lette da decision tree uno-contro-resto (profondità 3) e rifinite a mano sul catalogo 2010-11/2014/2019; le random forest (con selezione L1 e Anchor) servivano allo studio delle feature, non come classificatore. Sono **volutamente semplici**: non devono classificare tutto bene, sono la baseline da battere. Le regole TGF e UNC(LP) del fork erano state alterate e sono state ripristinate come quelle di Crupi.
+- Mancano rispetto a Crupi: la regola FP e le feature `fe_*` della curva di luce (wavelet entropy, skewness, …), calcolate con `tsfel` nel branch upstream `ric_review_28062023` (`models/localize_event.py`).
+- **Accettazione:** matrice senza leakage (verifica con un test che azzera il catalogo e controlla che `predicted_class` non cambi). **Accettata il 2026-10-03.**
+
+### Fase 6 — Classificatore XGBoost (prossima, solo su richiesta)
+Obiettivo della tesi: superare la baseline euristica con XGBoost. Regole per quando si parte:
+- **Dati etichettati:** `data/DeepGRB_catalog.csv` contiene 324 eventi di Crupi (2010-11: 73, 2014: 152, 2019: 99). Servono run del motore anche per 2010-11 e 2014 (una rete per periodo: training su GPU, da confermare) e l'aggancio delle etichette **per tempo con matching uno-a-uno** (`benchmark/matching.py`), mai per stringa di data. Le etichette multiple (es. `GRB/GF`) vanno gestite in modo esplicito.
+- **Feature:** solo fisiche (come la baseline) più le `fe_*` da portare dal branch `ric_review_28062023` (richiede `tsfel` nell'env; `xgboost` non è installato). Nessuna colonna del catalogo tra le feature (stesso test di leakage).
+- **Valutazione:** validazione incrociata stratificata e raggruppata per periodo (es. allenare su 2010-11 + 2014 e testare sul 2019, e viceversa), stesse metriche uno-contro-resto della baseline e confronto anche con la random forest di Crupi (200 alberi, profondità 4, `class_weight='balanced'`, selezione L1, split 80/20 stratificato). Classi rare (TGF, GF) riportate con i conteggi assoluti.
+- **Eventi senza etichetta** (es. i 52 senza controparte della baseline): le predizioni sono ipotesi, non risultati.
 
 ### Fase 5 — Report e consegna
 - `python -m benchmark.validate` genera `benchmark/out/REPORT.md` (+ CSV delle tabelle) con tutte le metriche; stampa versioni, seed, periodo, hash del commit.

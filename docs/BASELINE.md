@@ -29,7 +29,7 @@ Se un output esiste già, lo step viene saltato. Per rifare uno step **sposta** 
 
 ### Risultato atteso
 
-Con i dati e il modello attuali la run deve dare: 179 trigger → **144 eventi** (R 105, S 18, P 21); Crupi noti **70/71**, inediti **21/24**; GRB rivelati 60/78 (15 senza dati per la SAA); classificazione 80/91 sugli eventi abbinati. Le tabelle CSV di `benchmark/out/` devono essere identiche byte per byte (verificato rieseguendo la validazione).
+Con i dati e il modello attuali la run deve dare: 179 trigger → **144 eventi** (R 105, S 18, P 21); Crupi noti **70/71**, inediti **21/24**; GRB rivelati 60/78 (15 senza dati per la SAA); classificazione euristica (baseline) sugli eventi abbinati: regola GRB precision 0.91 / recall 0.97, etichetta singola compatibile con Crupi in 79/91 casi. Le tabelle CSV di `benchmark/out/` devono essere identiche byte per byte (verificato rieseguendo la validazione).
 
 ## 3. Dati e cache
 
@@ -70,5 +70,5 @@ Il modello legacy del 2019 viene usato solo per il periodo su cui è stato addes
 ## 6. Limiti noti
 
 - La rete è una ri-esecuzione della ricetta di Crupi (addestrata il 2026-09-21), non la sua rete originale, che non è disponibile. Ne seguono 52 eventi senza controparte né GBM né Crupi (diagnosi per evento nel report). La stabilità rispetto al seed non è stata misurata (richiede nuovi training).
-- Classificatore: `fe_wet`/`fe_skw` non calcolate (costanti); la regola TGF non può scattare con bin da 4.096 s.
+- Classificatore: è la baseline euristica di Crupi (soglie da decision tree rifinite a mano), da superare con XGBoost (docs/WORKING_RULES.md, Fase 6). Mancano la regola FP e le feature `fe_*` (tsfel, branch upstream `ric_review_28062023`).
 - Script di analisi in `scripts/` e `pipeline/script_to_latex.py`/`manual_label.py`: legacy, usano i vecchi path e le etichette posizionali; non fanno parte della baseline.
