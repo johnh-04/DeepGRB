@@ -32,6 +32,8 @@ import tensorflow as tf
 
 from connections.utils.config import (
     DATA_DIR,
+    END_DATE,
+    START_DATE,
     FOLD_BKG,
     FOLD_CSPEC_POS,
     FOLD_POSHIST,
@@ -41,7 +43,7 @@ from connections.utils.config import (
     RESULTS_DIR,
     GBM_TRIG_DB,
 )
-from models.download_bkg import download_spec
+from models.download_bkg import download_days
 from models.preprocess import build_table
 from models.model_nn import ModelNN
 from models.trigger import run_trigger
@@ -60,6 +62,8 @@ logging.basicConfig(
 
 # Operational intervals & production parameters
 ERANGE = {"n": [(28, 50), (50, 300), (300, 500)], "b": [(756, 5025), (5025, 50000)]}
+# Download and benchmark use START_DATE/END_DATE (config, inclusive).
+# The month labels below only name the cached NN/trigger/result files.
 START_MONTH = "03-2019"
 END_MONTH = "07-2019"
 TIMEFRAME_LABEL = f"{START_MONTH}_{END_MONTH}"
@@ -100,48 +104,11 @@ def clean_label(label: Any) -> str:
 # STEP 1/7: DATA INGESTION WITH RESILIENCE CHECKS
 # ======================================================================
 def run_step_download() -> pd.DataFrame:
-    print(f"\n[STEP 1/7] Data Ingestion & Integrity Check ({START_MONTH} to {END_MONTH})...")
-    
-    # If daily preprocessed tables already exist, bypass raw FTP ingestion
-    bkg_files = list(bkg_dir.glob("*.csv"))
-    if bkg_files:
-        logging.info(f"Found {len(bkg_files)} preprocessed daily tables in {bkg_dir}. Skipping download.")
-        days_list = sorted([f.stem for f in bkg_files])
-        return pd.DataFrame({"id": days_list, "day": days_list}, index=days_list)
-
-    from gbm.finder import ContinuousFtp
-
-    df_days = download_spec(START_MONTH, END_MONTH)
-    days_list = df_days["day"].tolist() if "day" in df_days.columns else df_days.index.tolist()
-
-    max_attempts = 3
-    for attempt in range(1, max_attempts + 1):
-        missing_days = []
-        for day_str in days_list:
-            c_cnt = len(list(cspec_dir.glob(f"*{day_str}*.pha")))
-            p_cnt = len(list(poshist_dir.glob(f"*{day_str}*.fit*")))
-            if c_cnt < 14 or p_cnt < 1:
-                missing_days.append((day_str, c_cnt, p_cnt))
-
-        if not missing_days:
-            logging.info(f"All {len(days_list)} telemetry days verified complete on attempt {attempt}.")
-            break
-
-        logging.warning(f"Attempt {attempt}/{max_attempts}: {len(missing_days)} days incomplete. Re-fetching missing files...")
-        for day_str, c_cnt, p_cnt in missing_days:
-            year = "20" + str(day_str)[:2]
-            month = str(day_str)[2:4]
-            day = str(day_str)[4:6]
-            utc_str = f"{year}-{month}-{day}T12:00:00"
-            try:
-                ftp = ContinuousFtp(utc=utc_str)
-                if c_cnt < 14:
-                    ftp.get_cspec(str(cspec_dir))
-                if p_cnt < 1:
-                    ftp.get_poshist(str(poshist_dir))
-            except Exception as e:
-                logging.warning(f"Transfer error on day {day_str}: {e}")
-
+    print(f"\n[STEP 1/7] Data Ingestion & Integrity Check ({START_DATE} to {END_DATE}, inclusive)...")
+    # Idempotent: complete days are checked on disk only, missing files are fetched per detector.
+    df_days = download_days(START_DATE, END_DATE, cspec_dir=cspec_dir, poshist_dir=poshist_dir)
+    n_ok = int(df_days["complete"].sum())
+    logging.info(f"Raw data complete for {n_ok}/{len(df_days)} days.")
     return df_days
 
 
@@ -150,12 +117,13 @@ def run_step_download() -> pd.DataFrame:
 # ======================================================================
 def run_step_preprocess(df_days: pd.DataFrame) -> None:
     print(f"\n[STEP 2/7] Preprocessing Module into: {bkg_dir.name}/...")
-    bkg_files = list(bkg_dir.glob("*.csv"))
-    if not bkg_files:
-        logging.info("Extracting energy-integrated count rates and orbital vectors...")
-        build_table(df_days, ERANGE, bool_overwrite=False, bool_parallel=True, n_jobs=4)
-    else:
-        logging.info(f"Preprocessed daily tables cached ({len(bkg_files)} files). Skipping build_table.")
+    # build_table skips days whose table already exists, so only new days are processed.
+    todo = df_days[df_days["complete"] & ~df_days["day"].apply(lambda d: (bkg_dir / f"{d}.csv").exists())]
+    if todo.empty:
+        logging.info("All complete days already have a preprocessed table.")
+        return
+    logging.info(f"Preprocessing {len(todo)} new day(s): {', '.join(todo['day'])}")
+    build_table(todo, ERANGE, bool_overwrite=False, bool_parallel=True, n_jobs=4)
 
 
 # ======================================================================

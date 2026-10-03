@@ -1,89 +1,203 @@
-import calendar
-import datetime
+"""
+Idempotent download of daily Fermi/GBM CSPEC and POSHIST files from HEASARC.
+
+For every day of an inclusive date window the local folders are checked first;
+only the files that are missing are requested, one detector at a time, with up
+to `max_attempts` passes. A day that is already complete never opens an FTP
+connection, so a second run downloads nothing.
+
+Files are fetched into a temporary staging folder, validated (FITS checksums and
+data readable) and only then moved into place. Existing files are never
+rewritten: gbm-data-tools appends to an existing file of the same name, which
+would corrupt it.
+"""
+
 import logging
 import os
+import re
+import shutil
+import tempfile
+import warnings
 from pathlib import Path
-from typing import List
+from typing import Callable, Dict, List, Optional, Union
+
 import pandas as pd
-from dateutil.relativedelta import relativedelta
+from astropy.io import fits
 from gbm.finder import ContinuousFtp
 
-from connections.utils.config import DATA_DIR, FOLD_CSPEC_POS, FOLD_POSHIST
+from connections.utils.config import DATA_DIR, END_DATE, FOLD_CSPEC_POS, FOLD_POSHIST, START_DATE
+from utils.period import months_to_window, window_days
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
+NAI_DETS = [f"n{d}" for d in "0123456789ab"]
+BGO_DETS = ["b0", "b1"]
+# preprocess.build_table requires all 14 CSPEC files of a day
+CSPEC_DETS = NAI_DETS + BGO_DETS
 
-def download_spec(start_month: str, end_month: str, bool_overwrite: bool = False) -> pd.DataFrame:
+PathLike = Union[str, Path]
+
+
+def _cspec_re(day: str, det: str) -> re.Pattern:
+    return re.compile(rf"glg_cspec_{det}_{day}_v\d{{2}}\.pha$")
+
+
+def _poshist_re(day: str) -> re.Pattern:
+    return re.compile(rf"glg_poshist_all_{day}_v\d{{2}}\.fit$")
+
+
+def _present(folder: Path, pattern: re.Pattern) -> List[Path]:
+    """Non-empty files in folder whose name matches pattern."""
+    if not folder.exists():
+        return []
+    return [p for p in folder.iterdir() if pattern.match(p.name) and p.stat().st_size > 0]
+
+
+def build_day_schedule(start_date: str, end_date: str) -> pd.DataFrame:
     """
-    Downloads raw daily CSPEC and Poshist FITS files from NASA HEASARC FTP.
-    Skips dates where complete sets (14 detector files) are already cached locally.
+    One row per day of the inclusive window.
 
-    :param start_month: Start month format 'MM-YYYY' (e.g. '03-2019')
-    :param end_month: End month format 'MM-YYYY', exclusive (e.g. '07-2019')
-    :param bool_overwrite: If True, forces redownloading even if complete.
-    :return: DataFrame of scheduled dates.
+    Columns: 'day' ('YYMMDD'), 'id' (alias of 'day', read by build_table),
+    'date' ('YYYY-MM-DD'), 'tStart' (noon UTC, used to address the FTP folder).
     """
-    cspec_path = DATA_DIR / FOLD_CSPEC_POS
-    poshist_path = DATA_DIR / FOLD_POSHIST
+    days = window_days(start_date, end_date)
+    dates = [pd.Timestamp(f"20{d[:2]}-{d[2:4]}-{d[4:]}") for d in days]
+    return pd.DataFrame({
+        "day": days,
+        "id": days,
+        "date": [d.strftime("%Y-%m-%d") for d in dates],
+        "tStart": [d.strftime("%Y-%m-%dT12:00:00") for d in dates],
+    })
 
-    cspec_path.mkdir(parents=True, exist_ok=True)
-    poshist_path.mkdir(parents=True, exist_ok=True)
 
-    # Parse interval bounds
-    start_dt = datetime.datetime.strptime(start_month, "%m-%Y").date()
-    end_dt = datetime.datetime.strptime(end_month, "%m-%Y").date()
+def find_missing(day: str, cspec_dir: PathLike, poshist_dir: PathLike) -> Dict[str, object]:
+    """Returns {'cspec': [missing detectors], 'poshist': True if POSHIST missing}. Empty files count as missing."""
+    cspec_dir, poshist_dir = Path(cspec_dir), Path(poshist_dir)
+    missing_dets = [det for det in CSPEC_DETS if not _present(cspec_dir, _cspec_re(day, det))]
+    return {"cspec": missing_dets, "poshist": not _present(poshist_dir, _poshist_re(day))}
 
-    days: List[str] = []
-    t_starts: List[str] = []
 
-    curr_dt = start_dt
-    while curr_dt < end_dt:
-        year = curr_dt.year
-        month = curr_dt.month
-        num_days = calendar.monthrange(year, month)[1]
+def is_valid_fits(path: PathLike) -> bool:
+    """True if every HDU opens, its data can be read and its CHECKSUM/DATASUM (when present) match."""
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with fits.open(str(path), checksum=True, memmap=False) as hdul:
+                for hdu in hdul:
+                    _ = hdu.data
+        return True
+    except Exception as e:  # noqa: BLE001 - any failure means the file is unusable
+        logging.warning(f"Invalid FITS file {Path(path).name}: {e}")
+        return False
 
-        for d in range(1, num_days + 1):
-            day_obj = datetime.date(year, month, d)
-            days.append(day_obj.strftime("%y%m%d"))
-            t_starts.append(datetime.datetime(year, month, d, 12, 0, 0).strftime("%Y-%m-%dT%H:%M:%S.00"))
 
-        curr_dt += relativedelta(months=1)
+def _install(staging: Path, pattern: re.Pattern, target_dir: Path) -> bool:
+    """Moves validated staged files matching pattern into target_dir. Returns True if at least one was installed."""
+    installed = False
+    for f in sorted(staging.iterdir()):
+        if not pattern.match(f.name):
+            continue
+        if is_valid_fits(f):
+            os.replace(f, target_dir / f.name)
+            installed = True
+        else:
+            f.unlink()
+    return installed
 
-    df_days = pd.DataFrame({"id": days, "tStart": t_starts})
-    logging.info(f"Total operational days scheduled: {len(df_days)}")
 
-    # Multi-pass retry loop for FTP network resilience
-    for pass_idx in range(1, 5):
-        existing_files = set(os.listdir(str(cspec_path)))
-        days_to_download = []
+def _download_day(row: pd.Series, missing: Dict[str, object], cspec_dir: Path, poshist_dir: Path,
+                  ftp_factory: Callable) -> None:
+    """Fetches only the missing files of one day through a staging folder."""
+    day = row["day"]
+    staging = Path(tempfile.mkdtemp(prefix=f".download_{day}_", dir=str(cspec_dir.parent)))
+    try:
+        try:
+            ftp = ftp_factory(utc=row["tStart"])
+        except Exception as e:  # noqa: BLE001 - network errors are retried on the next pass
+            logging.error(f"[{day}] FTP connection failed: {e}")
+            return
 
-        for _, row in df_days.iterrows():
-            day_id = row["id"]
-            # 12 NaI + 2 BGO = 14 CSPEC files per calendar day
-            matched = [f for f in existing_files if day_id in f and f.startswith("glg_cspec")]
-            if len(matched) < 14 or bool_overwrite:
-                days_to_download.append(row)
-
-        if not days_to_download:
-            logging.info("All daily orbital CSPEC and Poshist telemetry are cached on disk.")
-            break
-
-        logging.info(f"[Pass {pass_idx}/4] Ingesting {len(days_to_download)} missing or partial days...")
-
-        for row in days_to_download:
-            day_id = row["id"]
+        for det in missing["cspec"]:
             try:
-                if bool_overwrite:
-                    for f in cspec_path.glob(f"*{day_id}*"):
-                        f.unlink(missing_ok=True)
+                ftp.get_cspec(str(staging), dets=[det], verbose=False)
+            except Exception as e:  # noqa: BLE001
+                logging.warning(f"[{day}] CSPEC {det} transfer failed: {e}")
+            if not _install(staging, _cspec_re(day, det), cspec_dir):
+                logging.warning(f"[{day}] CSPEC {det} not installed")
 
-                logging.info(f"Opening FTP stream for day {day_id} (UTC: {row['tStart']})")
-                ftp_daily = ContinuousFtp(utc=row["tStart"], gps=None)
-                ftp_daily.get_cspec(str(cspec_path))
-                ftp_daily.get_poshist(str(poshist_path))
+        if missing["poshist"]:
+            try:
+                ftp.get_poshist(str(staging), verbose=False)
+            except Exception as e:  # noqa: BLE001
+                logging.warning(f"[{day}] POSHIST transfer failed: {e}")
+            if not _install(staging, _poshist_re(day), poshist_dir):
+                logging.warning(f"[{day}] POSHIST not installed")
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
-            except Exception as e:
-                logging.error(f"Download failed on day {day_id}: {e}")
 
-    logging.info("CSPEC and Poshist data synchronization process finished.")
-    return df_days
+def _describe(missing: Dict[str, object]) -> str:
+    parts = [f"cspec:{','.join(missing['cspec'])}"] if missing["cspec"] else []
+    if missing["poshist"]:
+        parts.append("poshist")
+    return " ".join(parts)
+
+
+def download_days(
+    start_date: str = START_DATE,
+    end_date: str = END_DATE,
+    cspec_dir: Optional[PathLike] = None,
+    poshist_dir: Optional[PathLike] = None,
+    max_attempts: int = 3,
+    ftp_factory: Optional[Callable] = None,
+) -> pd.DataFrame:
+    """
+    Ensures CSPEC (12 NaI + 2 BGO) and POSHIST files exist for every day of [start_date, end_date].
+
+    :param start_date: first day, 'YYYY-MM-DD' (included)
+    :param end_date: last day, 'YYYY-MM-DD' (included)
+    :param cspec_dir: CSPEC folder (default data/cspec)
+    :param poshist_dir: POSHIST folder (default data/poshist)
+    :param max_attempts: download passes over the still-incomplete days
+    :param ftp_factory: callable(utc=...) returning a ContinuousFtp-like object (injectable for tests)
+    :return: schedule from build_day_schedule plus 'complete' (bool) and 'missing' (str) columns
+    """
+    cspec_dir = Path(cspec_dir or DATA_DIR / FOLD_CSPEC_POS)
+    poshist_dir = Path(poshist_dir or DATA_DIR / FOLD_POSHIST)
+    cspec_dir.mkdir(parents=True, exist_ok=True)
+    poshist_dir.mkdir(parents=True, exist_ok=True)
+    ftp_factory = ftp_factory or ContinuousFtp
+
+    schedule = build_day_schedule(start_date, end_date)
+    logging.info(f"Download window {start_date} -> {end_date}: {len(schedule)} days")
+
+    for attempt in range(1, max_attempts + 1):
+        pending = []
+        for _, row in schedule.iterrows():
+            missing = find_missing(row["day"], cspec_dir, poshist_dir)
+            if missing["cspec"] or missing["poshist"]:
+                pending.append((row, missing))
+        if not pending:
+            break
+        logging.info(f"[attempt {attempt}/{max_attempts}] {len(pending)} incomplete day(s)")
+        for row, missing in pending:
+            logging.info(f"[{row['day']}] fetching {_describe(missing)}")
+            _download_day(row, missing, cspec_dir, poshist_dir, ftp_factory)
+
+    final = [find_missing(d, cspec_dir, poshist_dir) for d in schedule["day"]]
+    schedule["missing"] = [_describe(m) for m in final]
+    schedule["complete"] = schedule["missing"] == ""
+
+    incomplete = schedule.loc[~schedule["complete"], ["day", "missing"]]
+    if incomplete.empty:
+        logging.info(f"All {len(schedule)} days complete (14 CSPEC + POSHIST).")
+    else:
+        for r in incomplete.itertuples():
+            logging.warning(f"Day {r.day} still incomplete: {r.missing}")
+    return schedule
+
+
+def download_spec(start_month: str, end_month: str, **kwargs) -> pd.DataFrame:
+    """Legacy entry point: 'MM-YYYY' labels with end month excluded. Prefer download_days."""
+    start_date, end_date = months_to_window(start_month, end_month)
+    return download_days(start_date, end_date, **kwargs)
