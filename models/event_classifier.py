@@ -1,38 +1,23 @@
 """
-Event Classifier reproducing Riccardo Crupi's deterministic heuristic logic
-and benchmarking against ground-truth catalogs.
+Event classifier reproducing Crupi's deterministic heuristic rules.
+
+The predicted class depends only on physical features (significance per range,
+hardness ratios, Sun/Earth angular distances, SAA/pole proximity, galactic
+latitude, duration, detector counts). Catalog columns are never read here; they
+are used only by the validation (benchmark/validate.py).
+
+Known limits (documented, not tuned): the wavelet features fe_wet/fe_skw are not
+computed (constant defaults, so the 'fe_wet > 2.054' GRB condition is always true),
+and the TGF rule (duration < 0.2 s) cannot fire with 4.096 s bins.
 """
 
 import logging
-import sys
-from pathlib import Path
-from typing import Optional, Set
+from typing import Optional
 import numpy as np
 import pandas as pd
-from sklearn.metrics import classification_report, confusion_matrix
 
-from connections.utils.config import DATA_DIR, RESULTS_DIR, DEEP_GRB_CSV
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-
-
-class DualLogger:
-    """Redirects stdout stream simultaneously to console and an output text file."""
-
-    def __init__(self, filepath: Path) -> None:
-        self.terminal = sys.stdout
-        self.log = open(filepath, "w", encoding="utf-8")
-
-    def write(self, message: str) -> None:
-        self.terminal.write(message)
-        self.log.write(message)
-
-    def flush(self) -> None:
-        self.terminal.flush()
-        self.log.flush()
-
-    def close(self) -> None:
-        self.log.close()
 
 
 class CrupiEventClassifier:
@@ -153,12 +138,7 @@ class CrupiEventClassifier:
         y_pred["UNC"] = 1 - (y_pred["SF"] | y_pred["TGF"] | y_pred["GF"] | y_pred["UNC(LP)"] | y_pred["GRB"])
 
         def resolve_label(row: pd.Series) -> str:
-            # Se è presente un trigger nel catalogo GRB noto, mantieni la label
-            cat = str(df.loc[row.name, "catalog_triggers"]) if "catalog_triggers" in df.columns else ""
-            if "GRB" in cat:
-                return "GRB"
-            if "TGF" in cat:
-                return "TGF"
+            # Physical features only: catalog columns must never decide the class (no leakage).
             for label in ["GRB", "TGF", "SF", "UNC(LP)", "GF", "UNC"]:
                 if row[label]:
                     return label
@@ -167,93 +147,3 @@ class CrupiEventClassifier:
         y_pred["predicted_class"] = y_pred.apply(resolve_label, axis=1)
         self.y_pred = y_pred
         return self.y_pred
-
-    def validate_with_crupi_catalog(self, catalog_path: Path) -> Optional[pd.DataFrame]:
-        """Cross-matches results against Crupi's publication catalog and computes confusion metrics."""
-        if self.y_pred is None:
-            self.apply_classification_logic()
-
-        if not Path(catalog_path).exists():
-            logging.error(f"Catalog file not found: {catalog_path}")
-            return None
-
-        df_class = pd.read_csv(catalog_path, index_col=0)
-        df_class["datetime"] = df_class["datetime"].astype(str).str.slice(0, 19)
-
-        df_crupi_ref = df_class[["datetime", "catalog_triggers"]].rename(
-            columns={"catalog_triggers": "crupi_ground_truth"}
-        )
-
-        merged = pd.merge(self.df, df_crupi_ref, how="left", on=["datetime"])
-        merged["crupi_ground_truth"] = merged["crupi_ground_truth"].fillna("UNKNOWN: FP")
-
-        def parse_target(val: str) -> str:
-            val_str = str(val)
-            if "GRB" in val_str:
-                return "GRB"
-            if "SF" in val_str or "SFL" in val_str:
-                return "SF"
-            if "TGF" in val_str:
-                return "TGF"
-            if "UNC(LP)" in val_str or "LOC" in val_str:
-                return "UNC(LP)"
-            if "GF" in val_str or "GAL" in val_str:
-                return "GF"
-            if "FP" in val_str:
-                return "FP"
-            return "UNC"
-
-        merged["true_class"] = merged["crupi_ground_truth"].apply(parse_target)
-        merged["pred_class"] = self.y_pred["predicted_class"]
-
-        labels_present = sorted(list(set(merged["true_class"].unique()) | set(merged["pred_class"].unique())))
-
-        print("\n" + "=" * 60)
-        print("          CRUPI BENCHMARK VALIDATION REPORT")
-        print("=" * 60)
-        print(f"Total processed events          : {len(merged)}")
-        matched_count = (merged["crupi_ground_truth"] != "UNKNOWN: FP").sum()
-        print(f"Matched with Crupi paper events : {matched_count}")
-
-        print("\nConfusion Matrix (Rows: Crupi Ground Truth, Cols: Pipeline):")
-        cm = confusion_matrix(merged["true_class"], merged["pred_class"], labels=labels_present)
-        cm_df = pd.DataFrame(cm, index=[f"True_{l}" for l in labels_present], columns=[f"Pred_{l}" for l in labels_present])
-        print(cm_df)
-
-        print("\nDetailed Classification Report:")
-        print(classification_report(merged["true_class"], merged["pred_class"], labels=labels_present, zero_division=0))
-        print("=" * 60)
-
-        return merged
-
-
-if __name__ == "__main__":
-    target_csv = RESULTS_DIR / "frg_03-2019_07-2019" / "events_table_loc.csv"
-    catalog_file = DEEP_GRB_CSV
-    report_txt = DATA_DIR.parent / "classification_summary_report.txt"
-
-    logger = DualLogger(report_txt)
-    sys.stdout = logger
-
-    try:
-        if not target_csv.exists():
-            print(f"[ERROR] Target event CSV not found at: {target_csv}")
-        else:
-            print(f"[INFO] Running validation on: {target_csv}")
-            df_mine = pd.read_csv(target_csv)
-            classifier = CrupiEventClassifier(df_mine)
-            classifier.prepare_features()
-            classifier.apply_classification_logic()
-
-            print("\n[INFO] Distribution of predicted physical classes:")
-            print(classifier.y_pred["predicted_class"].value_counts())
-
-            if catalog_file.exists():
-                classifier.validate_with_crupi_catalog(catalog_file)
-            else:
-                print(f"[WARNING] DeepGRB catalog missing at {catalog_file}")
-
-            print(f"\n[INFO] Text report saved to: {report_txt}")
-    finally:
-        sys.stdout = logger.terminal
-        logger.close()
