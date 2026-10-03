@@ -1,0 +1,148 @@
+################################################################################
+# INVALIDO — NON USARE QUESTE CIFRE
+#
+# Archiviato il 2026-10-03 (Fase 0, branch fix/baseline-2019).
+# Questo report è stato scritto a mano e NON corrisponde a nessuna esecuzione
+# del codice: per esempio dichiara T=99 "dal catalogo ufficiale GBM", mentre
+# l'esecuzione reale (report.log del 2026-10-02) dà 177 eventi di verità su
+# 153 giorni, con una distribuzione di classi diversa da quella qui riportata.
+# Anche subthreshold_candidates.csv, citato sotto, non esiste su disco.
+# Le "scoperte" sub-threshold del §3 (2019-03-08 22:10:12, 2019-05-25 00:45:54)
+# sono GRB del catalogo GBM (GRB190308923, GRB190525032).
+# Vedi docs/WORKING_RULES.md §1 e docs/WORKLOG.md.
+# File originale: benchmark/benchmark-crupi-2019.log
+# SHA-256 originale: b373c9720cb62ce97cf4105973231bd2203c4237d549f096557775fb7acdf31d
+################################################################################
+
+================================================================================
+DEEPGRB PIPELINE VALIDATION & BENCHMARK REPORT (03-2019 to 07-2019)
+================================================================================
+Date: 2026-10-01
+Platform: ReCaS Cluster (Multi-core CPU execution, optimized cache-bypass)
+Timeframe: 03-2019 -> 07-2019 (122 days, Solar Minimum baseline)
+Status: BENCHMARK VALIDATED & SUB-THRESHOLD CATALOG GENERATED
+
+================================================================================
+1. GLOBAL PIPELINE STABILITY & DETECTION BENCHMARK
+================================================================================
+Metric                  Legacy Framework      Refactored Pipeline (V2 - Current)
+--------------------------------------------------------------------------------
+Total Detections (P)    144                   144
+Ground Truth (T)        99 (Crupi Window)     99 (Official Fermi GBM Catalog)
+True Positives (TP)     82 (String match)     93 (Temporal match window <= 1200s)
+False Positives (FP)    62                    53 (Unmatched raw candidates)
+False Negatives (FN)    17                    6
+Precision               0.5694                0.6370
+Recall                  82.8%                 93.94%
+F1-Score                0.6721                0.7592
+False Alarm Rate (FAR)  N/A                   0.35 alerts/day (~1 alert / 3 days)
+Sub-threshold Candidates N/A                  77 exported events
+
+Detection Analysis:
+- The detection engine (Poisson-FOCuS on neural background predictions) exhibits 
+  high stability, capturing 93 of 99 cataloged events (93.94% recall).
+- The 0.35 alerts/day False Alarm Rate matches the theoretical target of the
+  FOCuS architecture, confirming background stability in quiet solar conditions.
+- Runtime performance optimized: cached bypass reduced Step 4 execution from 
+  >4 minutes of disk I/O to <1 second.
+
+================================================================================
+2. CLASSIFICATION DISTRIBUTION & MULTICLASS CONFUSION MATRIX
+================================================================================
+Global Pipeline Detections (144 total candidates extracted):
+  - Solar Flares (SF)        : 80
+  - Gamma-Ray Bursts (GRB)   : 63
+  - Terrestrial Flashes (TGF): 1
+
+Matched Events Breakdown (93 TP against Ground Truth):
+--------------------------------------------------------------------------------
+True Class \ Predicted   Pred_GRB    Pred_SF    Pred_TGF    Pred_UNC    Pred_UNC(LP)
+--------------------------------------------------------------------------------
+True_GRB                 61          13         0           0           0
+True_SF                  0           5          0           0           0
+True_TGF                 0           1          1           0           0
+True_UNC                 0           9          0           0           0
+True_UNC(LP)             0           3          0           0           0
+--------------------------------------------------------------------------------
+Total Predictions        61          31         1           0           0
+
+Classification Bottleneck (Heuristic Ruleset):
+- High purity on hard events: Pred_GRB achieved 100% precision (61/61 matched 
+  are True_GRB).
+- Systemic failure on soft events: 13 True_GRBs, 1 True_TGF, 9 True_UNC, and 
+  3 True_UNC(LP) collapsed entirely into Pred_SF due to rigid hard-coded 
+  Hardness Ratio thresholds in `CrupiEventClassifier`.
+
+================================================================================
+3. SUB-THRESHOLD CANDIDATES & NOVEL DISCOVERIES
+================================================================================
+A total of 77 candidates were isolated and exported to:
+`data/results/frg_03-2019_07-2019/subthreshold_candidates.csv`
+
+Composition of the 77 Sub-threshold Events:
+  - 26 events: Matches with Crupi's ground-truth offline discoveries 
+               (cataloged as UNKNOWN / UNC / LOCLPAR). Full 100% replication.
+  - 51 events: Uncataloged candidate transients detected by Poisson-FOCuS.
+
+Current Heuristic Label Distribution on Sub-threshold Catalog:
+  - SF candidates  : 75
+  - GRB candidates : 2
+
+Confirmed High-Confidence Sub-threshold GRB Candidates:
+--------------------------------------------------------------------------------
+UTC Timestamp               Duration (s)     RA (deg)    Dec (deg)   Type
+--------------------------------------------------------------------------------
+2019-03-08 22:10:12.148     4.096            164.06      -23.42      Long GRB
+2019-05-25 00:45:54.147     0.000 (sub-bin)  346.86      +18.43      Short GRB
+--------------------------------------------------------------------------------
+Astrophysical Significance:
+- Neither candidate triggered the on-board Fermi GBM flight computer.
+- The 2019-03-08 event exhibits a typical Long GRB profile (duration ~4.1s).
+- The 2019-05-25 event is an impulsive hard transient (<1s), consistent with 
+  a Short GRB or magnetar burst, localized in deep space far from the solar disk.
+
+================================================================================
+4. ARCHITECTURAL GAP: CRUPI (RANDOM FOREST) VS. PROPOSED (XGBOOST)
+================================================================================
+State of the Art in DeepGRB Literature:
+- Crupi's 2023 Paper (arXiv:2303.15936): Built the neural background + FOCuS
+  engine; used simple heuristic cuts for classification.
+- Crupi's 2024 Ph.D. Thesis (arXiv:2401.15632): Demonstrated that heuristics 
+  fail on soft GRBs; explored Random Forest with XAI (SHAP) offline on 2019 data.
+- Inherited Codebase State: Stopped at the heuristic rule stage (`apply_classification_logic`). 
+  The machine learning classifier was never integrated end-to-end in Step 6.
+
+Rationale for Native XGBoost Integration:
+1. Handling Extreme Class Imbalance: GRBs are rare compared to background/flares. 
+   XGBoost dynamically weights sparse classes via gradient optimization 
+   (`scale_pos_weight`), unlike standard bagging in Random Forest.
+2. Regularization & Overfitting: Built-in L1/L2 leaf regularization prevents 
+   the model from overfitting on noisy Poisson count statistics.
+3. Software Engineering Contribution: Transforming offline notebook exploration 
+   into an integrated, automated, production-grade Step 6 classifier.
+
+================================================================================
+5. STRATEGIC EXECUTION ROADMAP
+================================================================================
+Phase 1: Solar Maximum Stress Test (2024 Dataset)
+  - Objective: Run the current pipeline on 2024 data (Cycle 25 peak).
+  - Hypothesis: High solar flare activity will trigger extreme false-positive 
+    explosions in the heuristic classifier, quantitatively proving its collapse 
+    under harsh space weather conditions.
+
+Phase 2: Feature Engineering & Head-to-Head Model Training
+  - Extract physical feature vectors for all detected segments:
+    * 4-channel CSPEC integrated counts & hardness ratios (C1..C4).
+    * Temporal profile metrics (rise time, decay time, skewness, duration).
+    * Multi-detector NaI spatial coincidence and solar distance angle.
+  - Benchmark Stratified 5-Fold Cross-Validation:
+    * Baseline 1: Heuristic cuts (Crupi 2023)
+    * Baseline 2: Random Forest (Crupi 2024)
+    * Proposed  : XGBoost Classifier (Thesis Contribution)
+
+Phase 3: Sub-threshold Candidate Reclassification & Multi-Instrument Cross-Match
+  - Apply trained XGBoost to the 75 sub-threshold candidates currently marked as SF.
+  - Cross-correlate high-probability novel GRB candidates with external gamma-ray 
+    instruments (Konus-Wind, INTEGRAL SPI-ACS, Swift-BAT) to confirm cosmic origin 
+    for publication and GCN Circular dissemination.
+================================================================================
