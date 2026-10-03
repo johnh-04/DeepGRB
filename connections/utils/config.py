@@ -26,6 +26,17 @@ END_DATE = "2019-06-30"
 DATA_DIR = BASE_DIR / "data"
 RESULTS_DIR = DATA_DIR / "results"
 
+# Engine cache: outputs of steps 3-5 live in RUNS_DIR/<START_DATE>_<END_DATE>/engine-v<ENGINE_VERSION>/.
+# Bump ENGINE_VERSION whenever a change alters predictions, triggers or events,
+# so a new run never reuses results produced by older code.
+ENGINE_VERSION = "2"
+RUNS_DIR = DATA_DIR / "runs"
+
+
+def run_dir(start_date: str = START_DATE, end_date: str = END_DATE, engine_version: str = ENGINE_VERSION) -> Path:
+    """Output folder of the engine for one period and code version."""
+    return RUNS_DIR / f"{start_date}_{end_date}" / f"engine-v{engine_version}"
+
 # Ensure essential base folders exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)

@@ -166,6 +166,9 @@ data/results/*/data/
 data/results/*/plots/
 # Archived cache snapshots: keep README + checksums, ignore the copied data
 data/_archive_*/*/
+# Engine runs: keep manifest and result tables, ignore the large matrices
+data/runs/*/*/pred/
+data/runs/*/*/trig/
 
 # Datafiles soft to keep for 2019 exe
 !data/*.csv
@@ -174,6 +177,8 @@ data/_archive_*/*/
 !data/results/
 !data/results/*/
 !data/results/*/*.csv
+# Model bundles: track scaler + metadata, not the (copied) network weights
+data/nn_model/bundles/*/model.*
 
 # Datafiles Test
 data_test/bkg/
