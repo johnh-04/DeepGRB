@@ -1,247 +1,306 @@
 """
-Dynamic neural network background estimation model.
-Maps Fermi orbital telemetry and geomagnetic coordinates to continuous expected background count rates.
+Neural-network background estimator (Crupi et al. 2023).
+
+Maps Fermi orbital/attitude features to the 36 NaI count-rate channels. The
+architecture and training recipe follow the upstream code that produced the
+published results. A trained model is stored as a *bundle* folder:
+
+    model.keras | model.h5   the network
+    scaler.joblib            the StandardScaler fitted on the training inputs
+    metadata.json            period, seed, hyper-parameters, versions, per-channel MAE
+
+Predictions are written to explicit output paths and never overwrite inputs.
 """
 
-import datetime
-import gc
+import json
 import logging
-import os
+import platform
+import random
+import shutil
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.dates as md
-import matplotlib.pyplot as plt
+import joblib
 import numpy as np
 import pandas as pd
+import sklearn
+import tensorflow as tf
 from astropy.time import Time
-from sklearn.metrics import mean_absolute_error as MAE, median_absolute_error as MeAE
+from sklearn.metrics import mean_absolute_error as MAE
+from sklearn.metrics import median_absolute_error as MeAE
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-import tensorflow as tf
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+from tensorflow.keras.callbacks import EarlyStopping, LearningRateScheduler, ModelCheckpoint
 from tensorflow.keras.layers import BatchNormalization, Dense, Dropout
 from tensorflow.keras.models import load_model
 
 import connections.utils.config as cfg
-from connections.utils.config import BASE_DIR, GBM_TRIG_DB
 from models.utils.losses import loss_max, loss_median
 from utils.keys import get_keys
+from utils.period import window_days
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
+SAA_GAP_SECONDS = 500.0
+SPLIT_SEED = 0  # upstream train_test_split(random_state=0): fixes the scaler
+
+COL_SAT_POS = [
+    "pos_x", "pos_y", "pos_z", "a", "b", "c", "d", "lat", "lon", "alt",
+    "vx", "vy", "vz", "w1", "w2", "w3", "sun_vis", "sun_ra", "sun_dec",
+    "earth_r", "earth_ra", "earth_dec", "saa", "l",
+]
+COL_DET_POS = [f"{det}_{k}" for det in [f"n{i}" for i in "0123456789ab"] for k in ("ra", "dec", "vis")]
+
+
+def set_seeds(seed: int) -> None:
+    """Seeds python, numpy and TensorFlow."""
+    random.seed(seed)
+    np.random.seed(seed)
+    tf.keras.utils.set_random_seed(seed)
+
+
+def met_to_utc(met: Sequence[float]) -> pd.Series:
+    """Fermi MET seconds -> UTC timestamps (the 'fermi' time format is on the TT scale)."""
+    return pd.Series(Time(np.asarray(met, dtype=float), format="fermi").utc.to_datetime())
+
+
+def saa_mask_indices(met: Sequence[float], time_to_del: int, gap_seconds: float = SAA_GAP_SECONDS) -> np.ndarray:
+    """
+    Row positions to blank around every time gap > gap_seconds (SAA passages).
+
+    Upstream rule: for each first row after a gap, rows [ind - time_to_del, ind + time_to_del)
+    are removed, i.e. time_to_del bins on each side. Windows are clipped to the table
+    (upstream clipped them to the first/last gap, leaving those two sides unmasked).
+    """
+    met = np.asarray(met, dtype=float)
+    after_gap = np.where(np.diff(met) > gap_seconds)[0] + 1
+    mask = np.zeros(len(met), dtype=bool)
+    for ind in after_gap:
+        mask[max(ind - time_to_del, 0):min(ind + time_to_del, len(met))] = True
+    return np.where(mask)[0]
+
+
+def _lr_schedule(base_lr: float):
+    """Upstream piecewise learning rate: x12.5 for 4 epochs, x2 until epoch 12, then /2."""
+    def schedule(epoch, _lr):
+        if epoch < 4:
+            return base_lr * 12.5
+        if epoch < 12:
+            return base_lr * 2
+        return base_lr / 2
+    return schedule
+
 
 class ModelNN:
-    """Multi-layer Dense Neural Network regressor for 36-channel dynamic background estimation."""
+    """Dense regressor from orbital features to the 36 NaI count rates."""
 
-    def __init__(self, start_month: str, end_month: str) -> None:
-        self.start_month = start_month
-        self.end_month = end_month
-        self.list_csv: Optional[List[str]] = None
+    def __init__(self, start_date: str = cfg.START_DATE, end_date: str = cfg.END_DATE,
+                 bkg_dir: Optional[Path] = None, trig_catalog_path: Optional[Path] = None) -> None:
+        self.start_date = start_date
+        self.end_date = end_date
+        self.bkg_dir = Path(bkg_dir or cfg.DATA_DIR / cfg.FOLD_BKG)
+        self.trig_catalog_path = Path(trig_catalog_path or cfg.GBM_TRIG_DB)
+
+        self.col_met: List[str] = ["met"]
+        self.col_range: List[str] = get_keys()
+        self.col_sat_pos: List[str] = list(COL_SAT_POS)
+        self.col_det_pos: List[str] = list(COL_DET_POS)
+        self.col_selected: List[str] = self.col_sat_pos + self.col_det_pos
 
         self.df_data: Optional[pd.DataFrame] = None
         self.index_date: Optional[pd.Series] = None
         self.scaler: Optional[StandardScaler] = None
         self.nn_r: Optional[tf.keras.Model] = None
+        self.metadata: Dict = {}
 
-        self.col_met: List[str] = ["met"]
-        self.col_range: List[str] = get_keys()
-
-        self.col_sat_pos: List[str] = [
-            "pos_x", "pos_y", "pos_z", "a", "b", "c", "d", "lat", "lon", "alt",
-            "vx", "vy", "vz", "w1", "w2", "w3", "sun_vis", "sun_ra", "sun_dec",
-            "earth_r", "earth_ra", "earth_dec", "saa", "l"
-        ]
-
-        self.col_det_pos: List[str] = []
-        for det in ["n0", "n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8", "n9", "na", "nb"]:
-            self.col_det_pos.extend([f"{det}_ra", f"{det}_dec", f"{det}_vis"])
-
-        self.col_selected: List[str] = self.col_sat_pos + self.col_det_pos
-
+    # ------------------------------------------------------------------ data
     def prepare(self, bool_del_trig: bool = True) -> None:
-        """Loads daily background features, masks SAA passages, and filters cataloged triggers."""
-        logging.info("Preparing feature dataset for neural network training/inference...")
+        """Loads the daily tables of the window, drops SAA rows, flags rows usable for training."""
+        days = window_days(self.start_date, self.end_date)
+        files = [self.bkg_dir / f"{d}.csv" for d in days if (self.bkg_dir / f"{d}.csv").exists()]
+        missing = len(days) - len(files)
+        logging.info(f"Loading {len(files)}/{len(days)} daily tables {self.start_date} -> {self.end_date}"
+                     + (f" ({missing} missing)" if missing else ""))
+        if not files:
+            raise FileNotFoundError(f"No daily tables in {self.bkg_dir} for {self.start_date} -> {self.end_date}")
 
-        bkg_dir = cfg.DATA_DIR / cfg.FOLD_BKG
+        df = pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
+        cols = self.col_met + self.col_range + self.col_sat_pos + self.col_det_pos
+        df = df.loc[df["saa"] == 0, cols].reset_index(drop=True)
 
-        if self.list_csv and len(self.list_csv) > 0:
-            csv_files = [os.path.basename(f) for f in self.list_csv]
-        else:
-            # Parse date range filters (YYMM format)
-            dt_start = datetime.datetime.strptime(self.start_month, "%m-%Y")
-            dt_end = datetime.datetime.strptime(self.end_month, "%m-%Y")
-            prefix_start = dt_start.strftime("%y%m01.csv")
-            # Include all days of end_month up to index 31
-            prefix_end = dt_end.strftime("%y%m31.csv")
+        index_date = pd.Series(True, index=df.index)
+        if bool_del_trig:
+            # Training excludes the intervals of cataloged triggers (upstream: keep met <= start or met >= end)
+            trig = pd.read_csv(self.trig_catalog_path)
+            met = df["met"].to_numpy()
+            keep = np.ones(len(df), dtype=bool)
+            trig = trig[(trig["met_end_time"] >= met.min()) & (trig["met_time"] <= met.max())]
+            for t0, t1 in zip(trig["met_time"].to_numpy(), trig["met_end_time"].to_numpy()):
+                keep &= (met <= t0) | (met >= t1)
+            index_date &= keep
+        index_date &= (df[self.col_range] > 0).all(axis=1)
 
-            csv_files = sorted([
-                f for f in os.listdir(str(bkg_dir))
-                if f.endswith(".csv") and prefix_start <= f <= prefix_end
-            ])
-
-        df_list = []
-        for f in csv_files:
-            file_path = bkg_dir / f if not os.path.isabs(f) else Path(f)
-            try:
-                sub_df = pd.read_csv(file_path)
-                df_list.append(sub_df)
-            except Exception as e:
-                logging.warning(f"Could not load daily file {f}: {e}")
-
-        if not df_list:
-            raise FileNotFoundError(
-                f"No background data files found in {bkg_dir} between {self.start_month} and {self.end_month}"
-            )
-
-        df_data = pd.concat(df_list, ignore_index=True)
-
-        # Mask South Atlantic Anomaly passage rows
-        logging.info("Masking SAA passage telemetry (saa == 0)...")
-        cols_needed = self.col_met + self.col_range + self.col_sat_pos + self.col_det_pos
-        df_data = df_data.loc[df_data["saa"] == 0, cols_needed].reset_index(drop=True)
-
-        if bool_del_trig and Path(GBM_TRIG_DB).exists():
-            logging.info("Excising known GBM catalog burst intervals from training set...")
-            gbm_tri = pd.read_csv(GBM_TRIG_DB)
-            valid_mask = np.ones(len(df_data), dtype=bool)
-
-            min_met = df_data["met"].min()
-            max_met = df_data["met"].max()
-            relevant_trigs = gbm_tri[
-                (gbm_tri["met_end_time"] >= min_met) & (gbm_tri["met_time"] <= max_met)
-            ]
-
-            met_vals = df_data["met"].values
-            for _, r in relevant_trigs.iterrows():
-                valid_mask &= (met_vals < r["met_time"]) | (met_vals > r["met_end_time"])
-
-            index_date = pd.Series(valid_mask, index=df_data.index)
-        else:
-            index_date = pd.Series(True, index=df_data.index)
-
-        # Filter unphysical non-positive count rates
-        index_date = index_date & (df_data[self.col_range] > 0).all(axis=1)
-
-        self.df_data = df_data
+        self.df_data = df
         self.index_date = index_date
-        logging.info(f"Dataset ready. Valid samples: {self.index_date.sum()} / {len(self.df_data)}")
+        logging.info(f"Dataset ready: {len(df)} rows outside SAA, {int(index_date.sum())} usable for training")
 
-    def train(
-        self,
-        bool_train: bool = True,
-        loss_type: str = "median",
-        units: int = 2048,
-        epochs: int = 128,
-        lr: float = 0.001,
-        bs: int = 2048,
-        model_pretrain: Optional[str] = None,
-        dropout_rate: float = 0.05,
-    ) -> None:
-        """Trains or loads the background regression neural network."""
-        nn_dir = cfg.DATA_DIR / cfg.FOLD_NN
-        nn_dir.mkdir(parents=True, exist_ok=True)
-
+    def _split(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         y = self.df_data.loc[self.index_date, self.col_range].astype("float32")
         X = self.df_data.loc[self.index_date, self.col_selected].astype("float32")
+        return train_test_split(X, y, test_size=0.25, random_state=SPLIT_SEED, shuffle=True)
 
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, shuffle=True)
+    def fit_scaler(self) -> StandardScaler:
+        """StandardScaler on the training split (deterministic: same data -> same scaler)."""
+        X_train, _, _, _ = self._split()
+        self.scaler = StandardScaler().fit(X_train)
+        return self.scaler
 
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_test_scaled = scaler.transform(X_test)
-        self.scaler = scaler
+    # --------------------------------------------------------------- training
+    def train(self, bundle_dir: Path, seed: int = 0, loss_type: str = "mean", units: int = 2048,
+              epochs: int = 64, lr: float = 0.0008, bs: int = 2048, dropout_rate: float = 0.02) -> Dict:
+        """Trains with the upstream recipe and saves a bundle. Returns the metadata."""
+        set_seeds(seed)
+        X_train, X_test, y_train, y_test = self._split()
+        self.scaler = StandardScaler().fit(X_train)
+        X_train_s, X_test_s = self.scaler.transform(X_train), self.scaler.transform(X_test)
 
-        if bool_train:
-            logging.info("Constructing deep feedforward architecture with BatchNormalization...")
-            inputs = tf.keras.Input(shape=(X_train.shape[1],))
-            x = Dense(units, activation="relu")(inputs)
+        inputs = tf.keras.Input(shape=(X_train.shape[1],))
+        x = inputs
+        for n_units in (units, units, int(units / 2)):
+            x = Dense(n_units, activation="relu")(x)
             x = BatchNormalization()(x)
             x = Dropout(dropout_rate)(x)
+        outputs = Dense(len(self.col_range), activation="relu")(x)
+        model = tf.keras.Model(inputs=inputs, outputs=outputs)
 
-            x = Dense(units, activation="relu")(x)
-            x = BatchNormalization()(x)
-            x = Dropout(dropout_rate)(x)
+        loss = {"max": loss_max, "median": loss_median}.get(loss_type, "mae")
+        model.compile(loss=loss, optimizer=tf.keras.optimizers.Nadam(learning_rate=lr, beta_1=0.9, beta_2=0.99, epsilon=1e-07))
 
-            x = Dense(int(units / 2), activation="relu")(x)
-            x = BatchNormalization()(x)
-            x = Dropout(dropout_rate)(x)
+        bundle_dir = Path(bundle_dir)
+        bundle_dir.mkdir(parents=True, exist_ok=False)
+        checkpoint = bundle_dir / "best_checkpoint.keras"
+        model.fit(
+            X_train_s, y_train, epochs=epochs, batch_size=bs, validation_split=0.3, verbose=2,
+            callbacks=[
+                EarlyStopping(monitor="val_loss", mode="min", min_delta=0.01, patience=32),
+                ModelCheckpoint(str(checkpoint), monitor="val_loss", mode="min", save_best_only=True),
+                LearningRateScheduler(_lr_schedule(lr)),
+            ],
+        )
+        self.nn_r = load_model(str(checkpoint), compile=False, custom_objects={"loss_median": loss_median, "loss_max": loss_max})
 
-            outputs = Dense(len(self.col_range), activation="relu")(x)
-            model = tf.keras.Model(inputs=inputs, outputs=outputs)
+        self.metadata = {
+            "source": "trained",
+            "seed": seed,
+            "hyperparameters": {"loss_type": loss_type, "units": units, "epochs": epochs, "lr": lr,
+                                "batch_size": bs, "dropout": dropout_rate, "validation_split": 0.3,
+                                "early_stopping": {"min_delta": 0.01, "patience": 32}, "split_seed": SPLIT_SEED},
+            "metrics": self._channel_metrics(X_train_s, y_train, X_test_s, y_test),
+        }
+        self.save_bundle(bundle_dir, model_file="model.keras")
+        checkpoint.unlink(missing_ok=True)
+        return self.metadata
 
-            loss_func = loss_median if loss_type == "median" else (loss_max if loss_type == "max" else "mae")
-            optimizer = tf.keras.optimizers.Nadam(learning_rate=lr)
-            model.compile(loss=loss_func, optimizer=optimizer)
+    def _channel_metrics(self, X_train_s, y_train, X_test_s, y_test) -> Dict[str, Dict[str, float]]:
+        pred_train = self.nn_r.predict(X_train_s, batch_size=8192, verbose=0)
+        pred_test = self.nn_r.predict(X_test_s, batch_size=8192, verbose=0)
+        out = {}
+        for i, ch in enumerate(self.col_range):
+            out[ch] = {
+                "mae_train": float(MAE(y_train.iloc[:, i], pred_train[:, i])),
+                "mae_test": float(MAE(y_test.iloc[:, i], pred_test[:, i])),
+                "meae_train": float(MeAE(y_train.iloc[:, i], pred_train[:, i])),
+                "meae_test": float(MeAE(y_test.iloc[:, i], pred_test[:, i])),
+            }
+        return out
 
-            checkpoint_path = nn_dir / "best_model.keras"
-            callbacks = [
-                EarlyStopping(monitor="val_loss", patience=20, restore_best_weights=True),
-                ModelCheckpoint(str(checkpoint_path), monitor="val_loss", save_best_only=True)
-            ]
+    # ---------------------------------------------------------------- bundles
+    def save_bundle(self, bundle_dir: Path, model_file: str = "model.keras") -> None:
+        bundle_dir = Path(bundle_dir)
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        if not (bundle_dir / model_file).exists():
+            self.nn_r.save(str(bundle_dir / model_file))
+        joblib.dump(self.scaler, bundle_dir / "scaler.joblib")
+        meta = dict(self.metadata)
+        meta.update({
+            "model_file": model_file,
+            "period": {"start_date": self.start_date, "end_date": self.end_date},
+            "n_rows_outside_saa": int(len(self.df_data)) if self.df_data is not None else None,
+            "n_rows_training_pool": int(self.index_date.sum()) if self.index_date is not None else None,
+            "features": self.col_selected,
+            "targets": self.col_range,
+            "versions": {"python": platform.python_version(), "tensorflow": tf.__version__,
+                         "keras": tf.keras.__version__ if hasattr(tf.keras, "__version__") else None,
+                         "numpy": np.__version__, "pandas": pd.__version__, "sklearn": sklearn.__version__},
+        })
+        (bundle_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        self.metadata = meta
+        logging.info(f"Model bundle saved to {bundle_dir}")
 
-            logging.info("Training neural model...")
-            history = model.fit(
-                X_train_scaled, y_train,
-                epochs=epochs,
-                batch_size=bs,
-                validation_split=0.2,
-                callbacks=callbacks,
-                verbose=1
-            )
+    def load_bundle(self, bundle_dir: Path) -> None:
+        """Loads network, scaler and metadata saved together."""
+        bundle_dir = Path(bundle_dir)
+        self.metadata = json.loads((bundle_dir / "metadata.json").read_text(encoding="utf-8"))
+        self.nn_r = load_model(str(bundle_dir / self.metadata["model_file"]), compile=False,
+                               custom_objects={"loss_median": loss_median, "loss_max": loss_max})
+        self.scaler = joblib.load(bundle_dir / "scaler.joblib")
+        logging.info(f"Loaded model bundle {bundle_dir.name} (source: {self.metadata.get('source')})")
 
-            self.nn_r = model
-            model_name = f"model_{self.start_month}_{self.end_month}"
-            model.save(str(nn_dir / f"{model_name}.keras"))
-            logging.info(f"Model successfully saved to: {nn_dir / f'{model_name}.keras'}")
-        else:
-            model_file = nn_dir / (model_pretrain or f"model_{self.start_month}_{self.end_month}.keras")
-            logging.info(f"Loading cached model weights from {model_file}...")
-            self.nn_r = load_model(
-                str(model_file),
-                custom_objects={"loss_median": loss_median, "loss_max": loss_max},
-                compile=False
-            )
+    def bundle_from_legacy_h5(self, h5_path: Path, bundle_dir: Path) -> None:
+        """
+        Wraps a model trained by the upstream code (which did not save its scaler) into a bundle.
+        The scaler is refitted on the same deterministic training split; prepare() must have run
+        on the same period and inputs used for training.
+        """
+        h5_path, bundle_dir = Path(h5_path), Path(bundle_dir)
+        self.nn_r = load_model(str(h5_path), compile=False, custom_objects={"loss_median": loss_median, "loss_max": loss_max})
+        self.fit_scaler()
+        bundle_dir.mkdir(parents=True, exist_ok=False)
+        shutil.copy2(h5_path, bundle_dir / "model.h5")
+        self.metadata = {"source": "legacy_h5", "legacy_file": h5_path.name,
+                         "note": "trained by upstream-equivalent code (b0b2802); scaler refitted with split_seed",
+                         "split_seed": SPLIT_SEED}
+        self.save_bundle(bundle_dir, model_file="model.h5")
 
-    def predict(self, time_to_del: int = 150) -> None:
-        """Executes full-timeline background inference and saves foreground/background tables."""
-        logging.info("Executing neural background inference across continuous timeline...")
-        pred_dir = cfg.DATA_DIR / cfg.FOLD_PRED
-        pred_dir.mkdir(parents=True, exist_ok=True)
+    # -------------------------------------------------------------- inference
+    def predict(self, frg_path: Path, bkg_path: Path, time_to_del: int = 150) -> Tuple[Path, Path]:
+        """
+        Predicts the background on every row outside SAA and writes two new files:
+        frg (observed rates) and bkg (predicted rates), both with 'met' and UTC 'timestamp'.
+        Rows within time_to_del bins of a gap > 500 s and zero-count cells are set to NaN in both.
+        """
+        frg_path, bkg_path = Path(frg_path), Path(bkg_path)
+        for p in (frg_path, bkg_path):
+            if p.exists():
+                raise FileExistsError(f"Refusing to overwrite {p}")
+            p.parent.mkdir(parents=True, exist_ok=True)
 
         X_all = self.scaler.transform(self.df_data[self.col_selected].astype("float32"))
-        y_pred_arr = self.nn_r.predict(X_all, batch_size=4096)
+        y_pred_arr = self.nn_r.predict(X_all, batch_size=8192, verbose=0)
 
-        # Standard Fermi mission elapsed time conversion (GPS/MET baseline)
-        ts = Time(self.df_data["met"].values, format="fermi").datetime
+        met = self.df_data["met"].to_numpy()
+        ts = met_to_utc(met)
 
-        df_ori = self.df_data[self.col_range].copy()
-        df_ori["met"] = self.df_data["met"].values
-        df_ori["timestamp"] = ts
-
+        df_ori = self.df_data[self.col_range].astype("float32").reset_index(drop=True)
         y_pred = pd.DataFrame(y_pred_arr, columns=self.col_range)
-        y_pred["met"] = self.df_data["met"].values
-        y_pred["timestamp"] = ts
 
         if time_to_del > 0:
-            logging.info(f"Excising SAA transition boundaries (+/- {time_to_del * 4.096:.1f} s)...")
-            gaps = np.where(np.diff(df_ori["met"].values) > 500)[0]
-            del_indices = set()
-            for idx in gaps:
-                low = max(0, idx - time_to_del)
-                high = min(len(df_ori), idx + time_to_del)
-                del_indices.update(range(low, high))
+            rows = saa_mask_indices(met, time_to_del)
+            df_ori.loc[rows, self.col_range] = np.nan
+            y_pred.loc[rows, self.col_range] = np.nan
+            logging.info(f"Masked {len(rows)} rows within {time_to_del} bins of SAA gaps")
 
-            df_ori.loc[list(del_indices), self.col_range] = np.nan
-            y_pred.loc[list(del_indices), self.col_range] = np.nan
+        zeros = (df_ori[self.col_range] == 0).to_numpy()
+        df_ori = df_ori.mask(zeros)
+        y_pred = y_pred.mask(zeros)
+        logging.info(f"Masked {int(zeros.sum())} zero-count cells")
+        if (y_pred[self.col_range] == 0).any().any():
+            logging.error(f"Predicted rate equal to 0 in {int((y_pred[self.col_range] == 0).to_numpy().sum())} cells")
 
-        # Save partitioned matrices
-        frg_path = pred_dir / f"frg_{self.start_month}_{self.end_month}.csv"
-        bkg_path = pred_dir / f"bkg_{self.start_month}_{self.end_month}.csv"
-
+        for df in (df_ori, y_pred):
+            df["met"] = met
+            df["timestamp"] = ts.values
         df_ori.to_csv(frg_path, index=False)
         y_pred.to_csv(bkg_path, index=False)
-        logging.info(f"Foreground matrix saved to: {frg_path}")
-        logging.info(f"Background prediction matrix saved to: {bkg_path}")
+        logging.info(f"Wrote {frg_path} and {bkg_path}")
+        return frg_path, bkg_path
