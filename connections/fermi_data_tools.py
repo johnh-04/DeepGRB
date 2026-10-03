@@ -3,6 +3,7 @@ import logging
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from typing import Optional
 from gbm.finder import BurstCatalog, TriggerCatalog
 from gbm.time import Met
 
@@ -105,44 +106,37 @@ def df_burst_catalog(db_path: Path = GBM_BURST_DB) -> pd.DataFrame:
     return df_grb_clean
 
 
-def df_trigger_catalog(csv_path: Path = GBM_TRIG_DB) -> pd.DataFrame:
-    """Fetch general trigger catalog, convert timestamps to MET, and store to CSV."""
-    logging.info("Downloading General Trigger Catalog from HEASARC...")
-    trigcat = TriggerCatalog()
-    df_trigcat = pd.DataFrame(trigcat.get_table())
+def _iso_to_met(values: pd.Series) -> pd.Series:
+    return values.apply(lambda x: Met(0).from_iso(str(x).replace(" ", "T")).met)
 
-    # Convert the actual trigger event time to MET
-    met_values = df_trigcat["trigger_time"].apply(
-        lambda x: Met(0).from_iso(str(x).replace(" ", "T")).met
-    )
 
-    # Legacy compatibility aliases required by models/analyze.py
-    df_trigcat["met_time"] = met_values
-    df_trigcat["trig_time"] = met_values
+def build_trigger_catalog(raw: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalises the HEASARC fermigtrig table.
 
-    # Resolve detection timescale robustly
-    if "trigger_timescale" in df_trigcat.columns:
-        df_trigcat["trigger_timescale"] = df_trigcat["trigger_timescale"]
-    elif "timescale" in df_trigcat.columns:
-        df_trigcat["trigger_timescale"] = df_trigcat["timescale"]
-    else:
-        df_trigcat["trigger_timescale"] = np.nan
-
-    # Compute met_end_time (timescale is in milliseconds)
-    timescale_sec = pd.to_numeric(df_trigcat["trigger_timescale"], errors="coerce").fillna(1000.0) / 1000.0
-    df_trigcat["met_end_time"] = met_values + timescale_sec
-
-    df_trigcat["detector_mask"] = df_trigcat["detector_mask"].apply(
-        lambda m: map_det_mask(m, burst_format=False)
-    )
-
-    cols_to_keep = [
-        "name", "trigger_name", "met_time", "met_end_time", "trig_time", "trigger_time",
-        "trigger_timescale", "trigger_type", "detector_mask"
+    - met_time / met_end_time: the catalog interval 'time' -> 'end_time' (about -135 s / +480 s
+      around the trigger), as in the upstream code. It is the interval excluded from the NN
+      training and used to tag events with catalog triggers.
+    - trig_met / trigger_time: the trigger instant, used to match events to the catalog.
+    """
+    df = raw.copy()
+    df["met_time"] = _iso_to_met(df["time"])
+    df["met_end_time"] = _iso_to_met(df["end_time"])
+    df["trig_met"] = _iso_to_met(df["trigger_time"])
+    df["detector_mask"] = df["detector_mask"].apply(lambda m: map_det_mask(m, burst_format=False))
+    cols = [
+        "name", "trigger_name", "trigger_type", "met_time", "met_end_time", "trig_met",
+        "time", "end_time", "trigger_time", "trigger_timescale", "detector_mask",
     ]
+    return df[[c for c in cols if c in df.columns]].sort_values("trig_met").reset_index(drop=True)
 
-    available_cols = [c for c in cols_to_keep if c in df_trigcat.columns]
-    df_trigcat_clean = df_trigcat[available_cols].copy()
+
+def df_trigger_catalog(csv_path: Path = GBM_TRIG_DB, raw: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    """Downloads the trigger catalog from HEASARC (unless `raw` is given) and stores the normalised table."""
+    if raw is None:
+        logging.info("Downloading General Trigger Catalog from HEASARC...")
+        raw = pd.DataFrame(TriggerCatalog().get_table())
+    df_trigcat_clean = build_trigger_catalog(raw)
     df_trigcat_clean.to_csv(str(csv_path), index=False)
 
     logging.info(f"Trigger catalog successfully updated in: {csv_path}")
