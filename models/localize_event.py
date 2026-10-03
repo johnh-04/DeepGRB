@@ -100,29 +100,39 @@ def localize_event(ev: pd.Series, frg: pd.DataFrame, bkg: pd.DataFrame, bkg_dir:
     }
 
 
+def _localize_one(ev: pd.Series, frg: pd.DataFrame, bkg: pd.DataFrame, bkg_dir: Path, poshist_dir: Path,
+                  plot_dir: Optional[Path], seed: int) -> dict:
+    # per-event seed: results do not depend on execution order (parallel runs are reproducible)
+    np.random.seed(seed + int(ev["trig_ids"]))
+    try:
+        plot = Path(plot_dir) / f"event{int(ev['trig_ids'])}_loc.png" if plot_dir is not None else None
+        return localize_event(ev, frg, bkg, Path(bkg_dir), Path(poshist_dir), plot_path=plot)
+    except Exception as e:  # noqa: BLE001 - keep the event, mark the failure
+        logging.error(f"Localization failed for event {ev['trig_ids']}: {e}")
+        return {c: np.nan for c in LOC_COLUMNS}
+
+
 def localize(events_path: Path, frg_path: Path, bkg_path: Path, bkg_dir: Path, poshist_dir: Path,
-             out_path: Path, plot_dir: Optional[Path] = None, seed: int = 42) -> pd.DataFrame:
+             out_path: Path, plot_dir: Optional[Path] = None, seed: int = 42, n_jobs: int = 1) -> pd.DataFrame:
     """Adds LOC_COLUMNS to every event and writes a new table (never overwrites)."""
     out_path = Path(out_path)
     if out_path.exists():
         raise FileExistsError(f"Refusing to overwrite {out_path}")
-    np.random.seed(seed)
     events = pd.read_csv(events_path)
     frg = pd.read_csv(frg_path)
     bkg = pd.read_csv(bkg_path)
     if plot_dir is not None:
         Path(plot_dir).mkdir(parents=True, exist_ok=True)
 
-    records = []
-    for _, ev in events.iterrows():
-        try:
-            plot = Path(plot_dir) / f"event{int(ev['trig_ids'])}_loc.png" if plot_dir is not None else None
-            rec = localize_event(ev, frg, bkg, Path(bkg_dir), Path(poshist_dir), plot_path=plot)
-        except Exception as e:  # noqa: BLE001 - keep the event, mark the failure
-            logging.error(f"Localization failed for event {ev['trig_ids']}: {e}")
-            rec = {c: np.nan for c in LOC_COLUMNS}
-        records.append(rec)
-        logging.info(f"event {int(ev['trig_ids'])}: ra={rec['ra']} dec={rec['dec']}")
+    if n_jobs > 1:
+        from joblib import Parallel, delayed
+        records = Parallel(n_jobs=n_jobs, backend="loky")(
+            delayed(_localize_one)(ev, frg, bkg, bkg_dir, poshist_dir, plot_dir, seed) for _, ev in events.iterrows()
+        )
+    else:
+        records = [_localize_one(ev, frg, bkg, bkg_dir, poshist_dir, plot_dir, seed) for _, ev in events.iterrows()]
     out = pd.concat([events, pd.DataFrame(records, columns=LOC_COLUMNS)], axis=1)
+    n_fail = int(out["ra"].isna().sum())
+    logging.info(f"Localized {len(out) - n_fail}/{len(out)} events")
     out.to_csv(out_path, index=False)
     return out
