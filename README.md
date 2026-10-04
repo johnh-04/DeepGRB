@@ -2,103 +2,149 @@
 
 <img src="https://user-images.githubusercontent.com/93478548/189541951-83a118d4-0a6f-41f3-bc57-cbf0ab7623c2.png" width="750">
 
-**DeepGRB** is a framework for serching astronomical events. Is composed by a background estimator, performed with a Neural Network, and on top applied an efficent trigger algorithm called FOCuS.
+**DeepGRB** searches Fermi/GBM data for astronomical transients: a neural network estimates the
+background count rates of the 12 NaI detectors from the orbital state of the spacecraft, and the
+Poisson-FOCuS trigger algorithm looks for significant excesses over that background.
 
-> ### Authors & contributors:
-> **Riccardo Crupi**, **Giuseppe Dilillo**, Elisabetta Bissaldi, Kester Ward, Fabrizio Fiore, Andrea Vacchi
+This repository is a **consolidated version** of DeepGRB, maintained by **Giovanni Pio Martello**
+(Politecnico di Bari, master's thesis with Prof. Elisabetta Bissaldi; runs on the ReCaS Bari
+cluster and its Jupyter service). It reproduces the 2019 results of Crupi et al. (2023) with
+verifiable code and is the base for a learned classifier (XGBoost) and for the 2024 data.
 
-To know more about this research work, please refer to:
-- **Searching for long faint astronomical high energy transients: a data driven approach**. Riccardo Crupi, Giuseppe Dilillo, Kester Ward, Elisabetta Bissaldi, Fabrizio Fiore, Andrea Vacchi. https://link.springer.com/article/10.1007/s10686-023-09915-7
-- Poisson-FOCuS: An efficient online method for detecting count bursts with application to gamma ray burst detection. Kester Ward, Giuseppe Dilillo, Idris Eckley, Paul Fearnhead. https://arxiv.org/abs/2208.01494
+## Credits
 
-## Installation
-Clone repo and install packages:
+DeepGRB was created by **Riccardo Crupi** and **Giuseppe Dilillo**, with Elisabetta Bissaldi,
+Kester Ward, Fabrizio Fiore and Andrea Vacchi. Original repository:
+[github.com/rcrupi/DeepGRB](https://github.com/rcrupi/DeepGRB). Please cite:
+
+- **Searching for long faint astronomical high energy transients: a data driven approach.**
+  Riccardo Crupi, Giuseppe Dilillo, Kester Ward, Elisabetta Bissaldi, Fabrizio Fiore, Andrea Vacchi.
+  Experimental Astronomy 56, 421 (2023). https://link.springer.com/article/10.1007/s10686-023-09915-7
+- Poisson-FOCuS: An efficient online method for detecting count bursts with application to gamma ray
+  burst detection. Kester Ward, Giuseppe Dilillo, Idris Eckley, Paul Fearnhead.
+  https://arxiv.org/abs/2208.01494
+
+Consolidation, validation against the paper and maintenance of this version: Giovanni Pio Martello.
+License: MIT (see `LICENSE`).
+
+## The pipeline
+
+`pipeline/pipeline_bkg.py` is the only entry point. It runs nine steps; each step is skipped when its
+outputs already exist, so a run with everything in place ends right after the status table.
+
+| step | what | output |
+|---|---|---|
+| 1 | download CSPEC (12 NaI + 2 BGO) and POSHIST files of every day of the period (idempotent) | `data/cspec/`, `data/poshist/` |
+| 2 | preprocess: 36 count rates (12 NaI × 28–50, 50–300, 300–500 keV) and orbital features, 4.096 s bins | `data/bkg/YYMMDD.csv` |
+| 3 | neural background (one network per period; training only on request) | `<run>/pred/{frg,bkg}.csv` |
+| 4 | Poisson-FOCuS on the rates (mu_min 1.2, t_max 50 bins) | `<run>/trig/` |
+| 5 | triggers (3σ in 50–300 keV on ≥ 1 detector), events (merge within 600 s), significance S and tier R/S/P | `<run>/results/events_table.csv` |
+| 6 | localization (PSO, slow) and Crupi's heuristic classification | `<run>/results/events_classified.csv` |
+| 7 | post-processing flags (SAA edge, SAA region, near-zero background) | `<run>/results/events_flags.csv` |
+| 8 | validation: official GBM catalog (always), Crupi's tables (2019 only) | `<run>/validation/` |
+| 9 | report of the run and index of all runs | `<run>/RESULTS.md`, `docs/RUNS.md` |
+
+Parameters are those of the upstream code that produced the paper (three places where the code differs
+from the paper text are documented in `docs/WORKING_RULES.md` §2); they live in `connections/utils/config.py`.
+
+## Requirements
+
+Python 3.9 and the pinned packages of `requirements.txt` (the environment used for the 2019 baseline):
+
 ```
-git clone https://github.com/rcrupi/DeepGRB.git
-cd DeepGRB
 pip install -r requirements.txt
 ```
 
-To install the library **Fermi GBM Data Tools** follow this [page](https://fermi.gsfc.nasa.gov/ssc/data/analysis/rmfit/gbm_data_tools/gdt-docs/).
+`gbm-data-tools` is installed from the NASA tarball listed there. A GPU is needed only to train a
+network (step 3 with `FORCE_TRAIN`); everything else runs on CPU (4 cores, 16 GB on ReCaS).
 
-Python version: `3.6.8`
+## Running
 
-### Configuration
+Edit the **USER SETTINGS** block at the top of `pipeline/pipeline_bkg.py`:
 
-In the config file `connections/utils/config.py` specify the path folder **`PATH_TO_SAVE`** in which you want to download the data and save the results. It is possible to provide the names of the other folders included within it.
-
-### Quick start
+```python
+START_DATE = "2019-03-01"   # first UTC day, included
+END_DATE = "2019-06-30"     # last UTC day, included
+RUN_LABEL = None            # e.g. "seed1": separate run folder and model bundle
+TRAIN_SEED = None           # integer seed; required with FORCE_TRAIN
+FORCE_TRAIN = False         # train a new network (needs RUN_LABEL and TRAIN_SEED)
+...
 ```
-python pipeline/pipeline_bkg.py
+
+Every setting can also be given as an environment variable `DEEPGRB_<NAME>`, which has priority
+(full list in `utils/run_options.py`). Then, from the repository root:
+
+```bash
+python -u pipeline/pipeline_bkg.py --dry-run          # status table and steps to run, writes nothing
+nohup python -u pipeline/pipeline_bkg.py --jobs 4 > logs/pipeline.out 2>&1 &
+
+# the 2019 reference run (retrained network, seed 1), reusing existing data
+DEEPGRB_RUN_LABEL=seed1 DEEPGRB_SKIP_DOWNLOAD=1 nohup python -u pipeline/pipeline_bkg.py > logs/seed1.out 2>&1 &
+
+# a new network for a new period (hours on GPU)
+DEEPGRB_START_DATE=2024-05-01 DEEPGRB_END_DATE=2024-05-31 DEEPGRB_RUN_LABEL=seed1 \
+DEEPGRB_TRAIN_SEED=1 DEEPGRB_FORCE_TRAIN=1 nohup python -u pipeline/pipeline_bkg.py > logs/may2024.out 2>&1 &
 ```
 
-## Workflow
-`pipeline/pipeline_bkg.py` is the main script in which you can set the period of interest and run the following steps:
-1) download the data
-2) preprocess the data
-3) train and predict the bkg with an NN
-4) perform FOCuS, build the catalog
-5) localize the events and update the catalog
+The log is printed on stdout and written to `logs/`. Safety rules: a new labelled run never reuses a
+folder; an existing run only resumes its missing steps and outputs of steps 3–7 are never overwritten;
+a run whose recorded parameters or model checksum differ from the current ones stops; training needs an
+explicit seed and a label.
 
-### Download
-Given the start and end month (e.g. '03-2019' and '07-2019'), `download_spec(start_month, end_month)` run the download of the CSPEC and POSHIST files in the folder **`PATH_TO_SAVE\FOLD_CSPEC_POS`** specified in the config file.
+## Folders
 
-### Preprocess
-`build_table` builds the table containing the information\features of the satellites and the detector (e.g. Fermi geographical latitude, longitude, velocity, detectors pointing, ...) and the count rates observed by the detectors (target variables for the Neural Network). The bin time is 4.096s the energy range can be specified in `erange` and the resulting csv file is saved in **`PATH_TO_SAVE\FOLD_BKG`**.
+```
+pipeline/pipeline_bkg.py      entry point (USER SETTINGS, status table, 9 steps)
+connections/                  configuration (utils/config.py) and Fermi/GBM catalogs from HEASARC
+utils/                        channel keys, periods, Fermi time, run options and manifest, logging
+models/                       download, preprocess, background network, FOCuS (trigs/), events,
+                              localization (loc/), classifier, flags, losses
+benchmark/                    validation (validate.py), reports (report.py), matching, reference tables,
+                              audit/ and analysis/ tools used to regenerate the documents in docs/
+tests/                        unit tests (python -m unittest discover -s tests -t .)
+docs/                         baseline, runs, analyses, worklog, refactoring report
+data/                         inputs, models and runs (mostly not versioned, see data/README.md)
+```
 
-### Train
-It is trained a Feed Forward Neural Network with input the features of the satellites and the detector and as output the observed count rates.
-`bool_del_trig` is a boolean option to delete in the training phase the events already present in the Fermi GBM catalog. 
-Some hyperparameters can be set:
-- loss_type: deafult loss function is 'mean', Mean Absolute Error.
-- units: number of nodes in the first and second layer, the third is halved.
-- epochs: number of epochs of the NN.
-- lr: learning rate of the NN during training.
-- bs: batch size of the NN during training.
-- do: parameters for the dropout between layers.
+A run lives in `data/runs/<start>_<end>/engine-v<N>[-<label>]/` with `manifest.json` (parameters,
+model, history), `pred/`, `trig/`, `results/`, `validation/` and `RESULTS.md`. The engine version
+changes when a code change alters the events, so old results are never mixed with new code.
 
+## Reading RESULTS.md
 
-One the NN class is trained the `predict` method can be used along the parameter `time_to_del` which define how many seconds to exclude before and after entering in the SAA.
-In the `plot` method can be selected a time period (`time_r` and/or `time_iso`) and a detector/range (`det_rng`) to plot the count rates observed and estimated by the NN. 
-The model is saved in the folder **`PATH_TO_SAVE\FOLD_NN`** and the background estimation as csv in **`PATH_TO_SAVE\FOLD_PRED`**.
+Every run has the same sections: (1) period, network (bundle, seed, checksum) and parameters;
+(2) events and tiers R/S/P; (3) official GBM catalog: triggers by type, GRB by T90, sensitivity to the
+matching window (2 bins, 10, 60, 1200 s); (4) comparison with Crupi et al. with ✔/✘ acceptance
+criteria (2019 only); (5) events without counterpart, split by flag; (6) classification against the
+reference; (7) localization; (8) engine anomalies (predicted background ≤ 0, convergence, stability).
+`docs/RUNS.md` has one line per run.
 
-> <img src=https://user-images.githubusercontent.com/93478548/228681065-9474304f-fb2b-4aa7-a923-97edecafa15e.PNG width="650">
-> 
-> The background estimation for the n6 detector, in the energy range 1, on three hours of data. The Fermi/GBM count rate observations are represented over time as a black line, whereas the neural network estimation is plotted as a red solid line. The lower panel shows the residuals between the two quantities, with a black solid line denoting the reference of null residual.
+## Example: the 2019 baseline
 
+<!-- BASELINE:START (generated by python -m benchmark.baseline_doc; do not edit) -->
+<!-- BASELINE:END -->
 
-### FOCuS
-Now it's time for the trigger algorithm to shine. 
-Starting from the the observed count rates and the estimated count rates by the NN, FOCuS computes the segments where the excess of count rates is significant more than `threshold` sigma. So the parameters are: 
-- mu_min: multiplicative factor of the observed counts in relation to the integral of background values.
-- t_max: limits the choice of the best interval.
-- threshold: threshold parameter for the significance values exceed.
+## Scope and limits
 
-The catalog table will be stored in the folder **`FOLD_RES`** along with trigger data, significance and plots of the event's lightcurves.
+- **Events without counterpart are candidates, not discoveries.** Most of them are flagged near the SAA.
+- **Localization is not validated**: positions are used as classifier features only.
+- **The classifier is Crupi's heuristic baseline**: good on GRB, weak on the other classes; the FP rule
+  and the light-curve features `fe_*` (tsfel) are missing.
+- The number of events depends on the network (legacy vs retrained): see the stability line of RESULTS.md.
+- The paper covers 2019-03-01 → 2019-07-09; this baseline stops at 2019-06-30 (4 reference events out of scope).
 
-> <img src=https://user-images.githubusercontent.com/93478548/228660136-bf62b826-022b-4c1d-a0d4-4f7823ebe995.JPG width="500">
-> 
-> Example of a transient event. Photon counts from each triggered detector are plotted with step lines, across three energy bands spanning 28 − 50 keV, 50 − 300 keV and 300 − 500 keV, with a resolution of 4.096 s. The neural network’s prediction of background count rates is represented by solid lines. Different detectors are identified using different colors. A red shaded area limits FOCuS-Poisson’s best guess of the transient duration. Times are expressed in units of seconds according Fermi’s standard mission elapsed time (MET).
+## What changed with respect to the original code
 
+Fixed (details in `docs/WORKLOG.md` and `docs/DIFF_UPSTREAM.md`): per-event significance attached to the
+wrong events, catalog labels leaking into the classifier, SAA mask destroyed and inputs overwritten before
+FOCuS, a broken download, a model that could not be reloaded and an unsaved scaler, a time window that
+included days without data; predicted background ≤ 0 is now invalid in S (engine v3). Added: one-to-one
+validation against the GBM catalog and Crupi's tables, post-processing flags, labelled runs with explicit
+training seeds, a single entry point and a report per run. The consolidation (one configuration, one
+logging, no legacy code) is described in `docs/REFACTOR_REPORT.md`.
 
-### Localization
-This part of the pipeline considers the detectors triggered for each event and localizes the event in the instant of peak energy using simple geometric reasoning.
+## Open work
 
-> <img src=https://user-images.githubusercontent.com/93478548/228660171-4377aba6-8f51-43c1-831f-5605195545a7.JPG width="500">
-> 
-> Estimate of the candidate event’s source localization over the celestial sphere at 2019-04-20 22:32:56 UTC.
-> The plot is done thanks to the package **Fermi GBM Data Tools**.
-
-
-> |trig_ids |start_times      |duration      | catalog_triggers|trig_dets                                |sigma_r0    |sigma_r1    |sigma_r2    |ra     |dec    |
-> |---      |---              | ---          |---              |---                                      |---         |---         |---         |---    |---    |
-> |  35 |  2019-04-19 09:55:40|  262.532260  |   GRB190419414  |       n0_r0 n0_r1 n0_r2 n1_r0 n1_r1 ... |   16.186566 | 38.933412 | 6.321937  | 116.0  | -46.0 |
-> |  36 |2019-04-20 15:08:24  | 69.633413    |          NaN    |       n4_r1 n8_r1                       | 0.000000    | 9.749557  | 0.000000  | 293.0  | -41.0 |
-> |  37 |2019-04-20 22:32:56  | 16.384357    |          NaN    |      n6_r0 n6_r1 n7_r0 n7_r1 n8_r0 ...  | 15.158135   | 8.400105  | 0.000000  | 192.0  |  38.0 |
-> |  38 |2019-04-20 23:32:27  |  8.382987    | GRB190420981    |            n6_r1                        | 0.000000    | 3.620252  | 0.000000  | 246.0  | -67.0 |
-> |  39 |2019-04-22 16:05:09  | 20.480450    | GRB190422670    |         na_r1 nb_r1                     | 0.000000    | 6.935727  | 0.000000  | 193.0  | -41.0 |
-> | 40  |2019-04-22 18:58:31  |  4.096085    |          NaN    |     n0_r1 n2_r1 n2_r2 n9_r1             | 0.000000    | 5.668806  | 4.537611  | 134.0  | 11.0  |
-> |  41 |2019-04-22 22:56:09  |183.299547    | GRB190422957    |      n6_r0 n6_r1 n7_r0 n7_r1 n8_r0 ...  | 8.826744    | 10.507945 |  0.000000 |  183.0 | -61.0 |
-> | 42  |2019-04-28 00:16:26  | 61.441057    |          NaN    |   n0_r0 n0_r1 n1_r0 n1_r1 n2_r1 ...     | 16.546931   | 21.319538 | 0.000000  | 51.0   | 55.0  |
-> 
-> A portion example of a catalog table.
+- XGBoost classifier on Crupi's labelled events of 2010-11, 2014 and 2019 (`docs/WORKING_RULES.md`, phase 6;
+  Crupi's scripts kept in `docs/legacy_crupi/`).
+- Runs on 2024 data (solar cycle 25 maximum): one network per period.
