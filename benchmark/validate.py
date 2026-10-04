@@ -26,10 +26,11 @@ import numpy as np
 import pandas as pd
 
 from benchmark.matching import BINLENGTH, PRIMARY_MARGIN, match_one_to_one
-from connections.utils.config import BASE_DIR, END_DATE, GBM_BURST_DB, GBM_TRIG_DB, START_DATE, run_dir
+from connections.utils.config import BASE_DIR, DATA_DIR, END_DATE, FOLD_POSHIST, GBM_BURST_DB, GBM_TRIG_DB, START_DATE, run_dir
+from models.saa_flags import EDGE_WINDOW_S, REGION_DEG, SAA_GAP_S, PoshistTrack, compute_saa_flags
 from utils.fermi_time import utc_to_met
 from utils.keys import get_keys
-from utils.period import days_with_data, in_window
+from utils.period import days_with_data, in_window, window_days
 
 REF_DIR = BASE_DIR / "benchmark" / "reference"
 SAA_GAP_S = 500.0
@@ -353,6 +354,24 @@ def main() -> None:
     ev["match_gbm"] = ev.index.isin(ev_gbm)
     ev["match_crupi_known"] = ev.index.isin(ev_known)
     ev["match_crupi_unknown"] = ev.index.isin(ev_unknown)
+    ev["counterpart"] = ev["match_gbm"] | ev["match_crupi_known"] | ev["match_crupi_unknown"]
+
+    # ---- post-processing SAA flags (columns only: the event list does not change)
+    days = window_days((pd.Timestamp(START_DATE) - pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+                       (pd.Timestamp(END_DATE) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"))
+    flags = compute_saa_flags(ev["t_start"].to_numpy(), PoshistTrack.for_days(DATA_DIR / FOLD_POSHIST, days), rd.met)
+    flags.index = ev.index
+    ev = pd.concat([ev, flags], axis=1)
+    ev[["trig_ids", "start_times", "duration", "detectors", "sigma_C", "CE", "counterpart", "match_gbm",
+        "match_crupi_known", "match_crupi_unknown"] + list(flags.columns)].to_csv(out / "events_flags.csv", index=False)
+    flag_rows = []
+    for label, sub in (("abbinati Crupi/GBM", ev[ev["counterpart"]]), ("senza controparte", ev[~ev["counterpart"]]), ("tutti", ev)):
+        flag_rows.append({"eventi": label, "n": len(sub),
+                          "saa_edge_short_passage": int(sub["saa_edge_short_passage"].sum()),
+                          "saa_region_proximity": int(sub["saa_region_proximity"].sum()),
+                          "almeno uno": int((sub["saa_edge_short_passage"] | sub["saa_region_proximity"]).sum())})
+    flag_table = pd.DataFrame(flag_rows)
+
     lonely = ev[~(ev["match_gbm"] | ev["match_crupi_known"] | ev["match_crupi_unknown"])].copy()
     # per-event diagnosis: SAA proximity, nearest Crupi reference, orbit, class (if available)
     ref_t = np.concatenate([known_all["t"].to_numpy(), unknown_all["t"].to_numpy()])
@@ -367,7 +386,8 @@ def main() -> None:
     if cls_path.exists():
         lonely = lonely.merge(pd.read_csv(cls_path)[["trig_ids"] + extra], on="trig_ids", how="left")
     lonely_cols = ["trig_ids", "start_times", "duration", "detectors", "sigma_r0", "sigma_r1", "sigma_r2", "sigma_C", "CE",
-                   "catalog_triggers", "dist_saa_gap_s", "nearest_crupi", "nearest_crupi_dt_h"] + [c for c in extra if c in lonely.columns]
+                   "catalog_triggers", "dist_saa_gap_s", "nearest_crupi", "nearest_crupi_dt_h",
+                   "saa_edge_short_passage", "saa_region_proximity"] + [c for c in extra if c in lonely.columns]
     lonely[lonely_cols].to_csv(out / "events_without_counterpart.csv", index=False)
 
     # ---- sensitivity
@@ -463,7 +483,17 @@ def main() -> None:
          f"{int((ev['match_crupi_known'] | ev['match_crupi_unknown']).sum())} negli eventi abbinati a Crupi)."),
         "",
         md_table(lonely[[c for c in ["trig_ids", "start_times", "duration", "detectors", "sigma_C", "CE", "dist_saa_gap_s",
-                                     "nearest_crupi", "nearest_crupi_dt_h", "l", "lat_fermi", "predicted_class"] if c in lonely.columns]]),
+                                     "nearest_crupi", "nearest_crupi_dt_h", "saa_edge_short_passage", "saa_region_proximity",
+                                     "l", "lat_fermi", "predicted_class"] if c in lonely.columns]]),
+        "",
+        "### Flag SAA di post-processing (non cambiano l'elenco degli eventi)",
+        "",
+        f"`saa_edge_short_passage`: inizio evento (change point) entro {EDGE_WINDOW_S:.0f} s prima dell'entrata o dopo l'uscita di un "
+        f"passaggio SAA il cui buco nei dati è ≤ {SAA_GAP_S:.0f} s, quindi non mascherato. `saa_region_proximity`: Fermi entro "
+        f"{REGION_DEG}° dalla regione con flag SAA nelle POSHIST. Definizioni in `models/saa_flags.py` e `docs/ORBIT_ANALYSIS.md`; "
+        "per evento in `events_flags.csv`.",
+        "",
+        md_table(flag_table),
         "",
         "## A. Catalogo trigger GBM",
         "",
