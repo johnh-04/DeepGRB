@@ -397,7 +397,7 @@ def runs_index_row(run: Path) -> dict:
     ev, s = f["events"], f["summary"]
     row = {
         "periodo": f"{f['start']} → {f['end']}", "run": f"`{f['name']}`",
-        "rete": f"`{Path(f['bundle']).name if f['bundle'] else '?'}` (seed {seed_text(f)})",
+        "rete": f"`{Path(f['bundle']).name if f['bundle'] else '?'}`, seed {seed_text(f)}",
         "eventi R/S/P": f"{len(ev)} ({'/'.join(str(int((ev['CE'] == c).sum())) for c in 'RSP')})" if ev is not None else "—",
         "GBM rivelati": f"{s['gbm']['detected']}/{s['gbm']['available']}" if s else "—",
         "GRB": f"{s['gbm']['grb_detected']}/{s['gbm']['grb_available']}" if s else "—",

@@ -178,3 +178,25 @@ def flag_events(run: Path, poshist_dir: Path, start_date: str, end_date: str) ->
     flags.insert(0, "trig_ids", events["trig_ids"].to_numpy())
     flags.insert(1, "t_start_met", t_start.to_numpy())
     return flags
+
+
+def main() -> None:
+    """Writes <run>/results/events_flags.csv for an existing run (step 7 outside the pipeline); never overwrites."""
+    import argparse
+
+    from connections.utils.config import DATA_DIR, FOLD_POSHIST, run_period
+    from utils.logs import detail, setup_logging
+    parser = argparse.ArgumentParser(description=main.__doc__)
+    parser.add_argument("--run", type=Path, required=True, help="run folder data/runs/<start>_<end>/engine-v<N>[-<label>]")
+    args = parser.parse_args()
+    setup_logging()
+    out = args.run / "results" / "events_flags.csv"
+    if out.exists():
+        raise SystemExit(f"{out} exists: refusing to overwrite.")
+    flags = flag_events(args.run, DATA_DIR / FOLD_POSHIST, *run_period(args.run))
+    flags.to_csv(out, index=False)
+    detail(f"written {out}: " + ", ".join(f"{c} {int(flags[c].sum())}" for c in FLAG_COLUMNS))
+
+
+if __name__ == "__main__":
+    main()
