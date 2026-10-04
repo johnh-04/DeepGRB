@@ -17,7 +17,7 @@ from joblib import Parallel, delayed
 
 from utils.keys import get_keys
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 MAX_WORKERS = 4  # safe on ReCaS nodes (4 vCPU / 16 GB)
 
@@ -69,7 +69,7 @@ def run_trigger(
 
     inputs = {k: focus_inputs(frg[k], bkg[k]) for k in keys}
     n_invalid = sum(int(np.isnan(b).sum()) for _, b in inputs.values())
-    logging.info(f"FOCuS inputs: {len(frg)} bins x {len(keys)} channels, {n_invalid} invalid cells passed as NaN")
+    logger.info(f"FOCuS inputs: {len(frg)} bins x {len(keys)} channels, {n_invalid} invalid cells passed as NaN")
 
     workers = min(n_jobs or _available_cpus(), MAX_WORKERS)
     if workers > 1:
@@ -83,5 +83,5 @@ def run_trigger(
     focus_offset = pd.DataFrame({k: off for k, _, off in results})[keys]
     focus_res.to_csv(trig_path, index=False)
     focus_offset.to_csv(offset_path, index=False)
-    logging.info(f"Wrote {trig_path} and {offset_path}")
+    logger.info(f"Wrote {trig_path} and {offset_path}")
     return focus_res

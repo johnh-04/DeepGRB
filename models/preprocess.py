@@ -16,7 +16,7 @@ from gbm.data import Cspec, PosHist
 
 from connections.utils.config import DATA_DIR, FOLD_BKG, FOLD_CSPEC_POS
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
 def build_table(
@@ -39,7 +39,7 @@ def build_table(
     cspec_dir = DATA_DIR / FOLD_CSPEC_POS
     bkg_dir.mkdir(parents=True, exist_ok=True)
 
-    logging.info("Starting daily spectral binning and poshist consolidation...")
+    logger.info("Starting daily spectral binning and poshist consolidation...")
 
     for _, row in df_days.iterrows():
         day_str = str(row["id"])[:6]
@@ -53,7 +53,7 @@ def build_table(
             pha_files = sorted([f for f in available_files if ".pha" in f and day_str in f])
 
             if len(pha_files) < 14:
-                logging.warning(f"Incomplete detector set ({len(pha_files)}/14 files) for day {day_str}. Skipping.")
+                logger.warning(f"Incomplete detector set ({len(pha_files)}/14 files) for day {day_str}. Skipping.")
                 continue
 
             dic_data: Dict[str, np.ndarray] = {}
@@ -80,17 +80,17 @@ def build_table(
 
             pos_files = sorted([f for f in candidate_files if "poshist" in f.name and day_str in f.name], reverse=True)
             if not pos_files:
-                logging.warning(f"Missing Poshist file for day {day_str}. Skipping.")
+                logger.warning(f"Missing Poshist file for day {day_str}. Skipping.")
                 continue
 
             dic_data = fun_poshist(dic_data, pos_files[0])
 
             df_out = pd.DataFrame(dic_data)
             df_out.to_csv(target_csv, index=False)
-            logging.info(f"Processed and cached day: {day_str}")
+            logger.info(f"Processed and cached day: {day_str}")
 
         except Exception as e:
-            logging.error(f"Failed preprocessing day {day_str}: {e}")
+            logger.error(f"Failed preprocessing day {day_str}: {e}")
 
 
 def fun_lightcurve(

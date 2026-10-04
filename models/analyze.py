@@ -29,18 +29,17 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+from connections.utils.config import BIN_LENGTH_S as BINLENGTH
+from connections.utils.config import MAX_DET_NUMBER, MIN_DET_NUMBER
+from connections.utils.config import MERGE_S as MERGE_SECONDS
 from utils.keys import get_keys
 
-BINLENGTH = 4.096
-MIN_DET_NUMBER = 1
-MAX_DET_NUMBER = 13
-MERGE_SECONDS = 600
 QUANTILE_GRID = np.arange(0, 21) / 20
 NAI_IDS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b"]
 NAI_DETS = [f"n{i}" for i in NAI_IDS]
 RANGES = ["r0", "r1", "r2"]
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
 def merge(data: Sequence[Tuple[int, int]], length: int) -> List[Tuple[int, int]]:
@@ -255,7 +254,7 @@ class EventAnalyzer:
         trig_segments = [Segment.from_limits(s, e, self.offset) for s, e in trig_limits]
         event_limits = merge(trig_limits, length=int(MERGE_SECONDS / BINLENGTH))
         event_segments = [Segment.from_limits(s, e, self.offset) for s, e in event_limits]
-        logging.info(f"{len(trig_segments)} trigger segments -> {len(event_segments)} events (threshold {threshold})")
+        logger.info(f"{len(trig_segments)} trigger segments -> {len(event_segments)} events (threshold {threshold})")
 
         args = (self.frg, self.bkg, self.focus[keys], self.trig_ids, threshold)
         triggers_table = tableize(trig_segments, *args)

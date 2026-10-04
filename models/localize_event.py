@@ -21,7 +21,7 @@ from gbm.plot import SkyPlot
 
 from models.loc.localization_class import Localization
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 NAI_DETS = ["n0", "n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8", "n9", "na", "nb"]
 LOC_COLUMNS = [
@@ -110,7 +110,7 @@ def _localize_one(ev: pd.Series, frg: pd.DataFrame, bkg: pd.DataFrame, bkg_dir: 
         plot = Path(plot_dir) / f"event{int(ev['trig_ids'])}_loc.png" if plot_dir is not None else None
         return localize_event(ev, frg, bkg, Path(bkg_dir), Path(poshist_dir), plot_path=plot)
     except Exception as e:  # noqa: BLE001 - keep the event, mark the failure
-        logging.error(f"Localization failed for event {ev['trig_ids']}: {e}")
+        logger.error(f"Localization failed for event {ev['trig_ids']}: {e}")
         return {c: np.nan for c in LOC_COLUMNS}
 
 
@@ -135,6 +135,6 @@ def localize(events_path: Path, frg_path: Path, bkg_path: Path, bkg_dir: Path, p
         records = [_localize_one(ev, frg, bkg, bkg_dir, poshist_dir, plot_dir, seed) for _, ev in events.iterrows()]
     out = pd.concat([events, pd.DataFrame(records, columns=LOC_COLUMNS)], axis=1)
     n_fail = int(out["ra"].isna().sum())
-    logging.info(f"Localized {len(out) - n_fail}/{len(out)} events")
+    logger.info(f"Localized {len(out) - n_fail}/{len(out)} events")
     out.to_csv(out_path, index=False)
     return out

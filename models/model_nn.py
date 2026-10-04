@@ -36,13 +36,15 @@ from tensorflow.keras.layers import BatchNormalization, Dense, Dropout
 from tensorflow.keras.models import load_model
 
 import connections.utils.config as cfg
+from connections.utils.config import SAA_EXCLUSION_BINS, SAA_GAP_S
 from models.losses import loss_max, loss_median
 from utils.keys import get_keys
+from utils.logs import ensure_logging
 from utils.period import window_days
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
-SAA_GAP_SECONDS = 500.0
+SAA_GAP_SECONDS = SAA_GAP_S
 SPLIT_SEED = 0  # upstream train_test_split(random_state=0): fixes the scaler
 
 COL_SAT_POS = [
@@ -82,7 +84,7 @@ def saa_mask_indices(met: Sequence[float], time_to_del: int, gap_seconds: float 
 
 
 # Convergence check (non-blocking): the final val_loss should be well below the MAE of a constant
-# per-channel median predictor (benchmark/analysis/lr_check.py: 20.4 on the 2019 validation split).
+# per-channel median predictor (one-off check of 2026-10-04, docs/WORKLOG.md: 20.4 on the 2019 validation split).
 CONVERGENCE_MAX_RATIO = 0.5
 
 
@@ -101,8 +103,9 @@ def convergence_check(y_fit: np.ndarray, y_val: np.ndarray, history: Dict[str, l
 
 
 def report(msg: str = "") -> None:
-    """Training report line on stdout, flushed at once (readable under nohup / python -u)."""
-    print(msg, flush=True)
+    """Training report line, logged on stdout and flushed at once (readable under nohup / python -u)."""
+    ensure_logging()
+    logger.info(msg)
 
 
 class EpochReport(Callback):
@@ -144,7 +147,7 @@ def count_nonpositive_predictions(bkg_path: Path) -> Dict[str, int]:
 class ModelNN:
     """Dense regressor from orbital features to the 36 NaI count rates."""
 
-    def __init__(self, start_date: str = cfg.START_DATE, end_date: str = cfg.END_DATE,
+    def __init__(self, start_date: str, end_date: str,
                  bkg_dir: Optional[Path] = None, trig_catalog_path: Optional[Path] = None) -> None:
         self.start_date = start_date
         self.end_date = end_date
@@ -169,7 +172,7 @@ class ModelNN:
         days = window_days(self.start_date, self.end_date)
         files = [self.bkg_dir / f"{d}.csv" for d in days if (self.bkg_dir / f"{d}.csv").exists()]
         missing = len(days) - len(files)
-        logging.info(f"Loading {len(files)}/{len(days)} daily tables {self.start_date} -> {self.end_date}"
+        logger.info(f"Loading {len(files)}/{len(days)} daily tables {self.start_date} -> {self.end_date}"
                      + (f" ({missing} missing)" if missing else ""))
         if not files:
             raise FileNotFoundError(f"No daily tables in {self.bkg_dir} for {self.start_date} -> {self.end_date}")
@@ -192,7 +195,7 @@ class ModelNN:
 
         self.df_data = df
         self.index_date = index_date
-        logging.info(f"Dataset ready: {len(df)} rows outside SAA, {int(index_date.sum())} usable for training")
+        logger.info(f"Dataset ready: {len(df)} rows outside SAA, {int(index_date.sum())} usable for training")
 
     def _split(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         y = self.df_data.loc[self.index_date, self.col_range].astype("float32")
@@ -300,7 +303,7 @@ class ModelNN:
                f"ratio {conv['final_over_constant_median']:.2f} -> "
                + ("OK" if conv["ok"] else f"WARNING: final val_loss not well below the constant predictor (ratio >= {CONVERGENCE_MAX_RATIO})"))
         if not conv["ok"]:
-            logging.warning("Training convergence check failed (non-blocking): see metadata.json 'convergence'.")
+            logger.warning("Training convergence check failed (non-blocking): see metadata.json 'convergence'.")
         report(f"[train] fit time {fit_seconds / 60:.1f} min; total (incl. metrics and saving) "
                f"{(time.time() - t_start) / 60:.1f} min; bundle {bundle_dir}")
         report("=" * 70)
@@ -340,7 +343,7 @@ class ModelNN:
         })
         (bundle_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
         self.metadata = meta
-        logging.info(f"Model bundle saved to {bundle_dir}")
+        logger.info(f"Model bundle saved to {bundle_dir}")
 
     def load_bundle(self, bundle_dir: Path) -> None:
         """Loads network, scaler and metadata saved together."""
@@ -349,7 +352,7 @@ class ModelNN:
         self.nn_r = load_model(str(bundle_dir / self.metadata["model_file"]), compile=False,
                                custom_objects={"loss_median": loss_median, "loss_max": loss_max})
         self.scaler = joblib.load(bundle_dir / "scaler.joblib")
-        logging.info(f"Loaded model bundle {bundle_dir.name} (source: {self.metadata.get('source')})")
+        logger.info(f"Loaded model bundle {bundle_dir.name} (source: {self.metadata.get('source')})")
 
     def bundle_from_legacy_h5(self, h5_path: Path, bundle_dir: Path) -> None:
         """
@@ -368,7 +371,7 @@ class ModelNN:
         self.save_bundle(bundle_dir, model_file="model.h5")
 
     # -------------------------------------------------------------- inference
-    def predict(self, frg_path: Path, bkg_path: Path, time_to_del: int = 150) -> Tuple[Path, Path]:
+    def predict(self, frg_path: Path, bkg_path: Path, time_to_del: int = SAA_EXCLUSION_BINS) -> Tuple[Path, Path]:
         """
         Predicts the background on every row outside SAA and writes two new files:
         frg (observed rates) and bkg (predicted rates), both with 'met' and UTC 'timestamp'.
@@ -393,19 +396,19 @@ class ModelNN:
             rows = saa_mask_indices(met, time_to_del)
             df_ori.loc[rows, self.col_range] = np.nan
             y_pred.loc[rows, self.col_range] = np.nan
-            logging.info(f"Masked {len(rows)} rows within {time_to_del} bins of SAA gaps")
+            logger.info(f"Masked {len(rows)} rows within {time_to_del} bins of SAA gaps")
 
         zeros = (df_ori[self.col_range] == 0).to_numpy()
         df_ori = df_ori.mask(zeros)
         y_pred = y_pred.mask(zeros)
-        logging.info(f"Masked {int(zeros.sum())} zero-count cells")
+        logger.info(f"Masked {int(zeros.sum())} zero-count cells")
         if (y_pred[self.col_range] == 0).any().any():
-            logging.error(f"Predicted rate equal to 0 in {int((y_pred[self.col_range] == 0).to_numpy().sum())} cells")
+            logger.error(f"Predicted rate equal to 0 in {int((y_pred[self.col_range] == 0).to_numpy().sum())} cells")
 
         for df in (df_ori, y_pred):
             df["met"] = met
             df["timestamp"] = ts.values
         df_ori.to_csv(frg_path, index=False)
         y_pred.to_csv(bkg_path, index=False)
-        logging.info(f"Wrote {frg_path} and {bkg_path}")
+        logger.info(f"Wrote {frg_path} and {bkg_path}")
         return frg_path, bkg_path

@@ -14,8 +14,8 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
-BINLENGTH = 4.096
-PRIMARY_MARGIN = 2 * BINLENGTH
+from connections.utils.config import BIN_LENGTH_S as BINLENGTH
+from connections.utils.config import MATCH_MARGIN_S as PRIMARY_MARGIN
 
 
 def match_one_to_one(

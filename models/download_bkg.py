@@ -24,10 +24,10 @@ from typing import Callable, Dict, List, Optional, Union
 import pandas as pd
 from astropy.io import fits
 
-from connections.utils.config import DATA_DIR, END_DATE, FOLD_CSPEC_POS, FOLD_POSHIST, START_DATE
+from connections.utils.config import DATA_DIR, FOLD_CSPEC_POS, FOLD_POSHIST
 from utils.period import months_to_window, window_days
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 NAI_DETS = [f"n{d}" for d in "0123456789ab"]
 BGO_DETS = ["b0", "b1"]
@@ -76,6 +76,24 @@ def find_missing(day: str, cspec_dir: PathLike, poshist_dir: PathLike) -> Dict[s
     return {"cspec": missing_dets, "poshist": not _present(poshist_dir, _poshist_re(day))}
 
 
+def missing_raw_days(days: List[str], cspec_dir: PathLike, poshist_dir: PathLike) -> List[str]:
+    """Days ('YYMMDD') without all 14 CSPEC files or the POSHIST file; one directory listing per folder."""
+    def names(folder: Path) -> set:
+        if not folder.exists():
+            return set()
+        return {e.name for e in os.scandir(folder) if e.is_file() and e.stat().st_size > 0}
+    cspec, poshist = names(Path(cspec_dir)), names(Path(poshist_dir))
+    cspec_re = re.compile(r"glg_cspec_(\w\w)_(\d{6})_v\d{2}\.pha$")
+    poshist_re = re.compile(r"glg_poshist_all_(\d{6})_v\d{2}\.fit$")
+    have = {}
+    for n in cspec:
+        m = cspec_re.match(n)
+        if m:
+            have.setdefault(m.group(2), set()).add(m.group(1))
+    pos_days = {m.group(1) for m in map(poshist_re.match, poshist) if m}
+    return [d for d in days if not set(CSPEC_DETS) <= have.get(d, set()) or d not in pos_days]
+
+
 def is_valid_fits(path: PathLike) -> bool:
     """True if every HDU opens, its data can be read and its CHECKSUM/DATASUM (when present) match."""
     try:
@@ -86,7 +104,7 @@ def is_valid_fits(path: PathLike) -> bool:
                     _ = hdu.data
         return True
     except Exception as e:  # noqa: BLE001 - any failure means the file is unusable
-        logging.warning(f"Invalid FITS file {Path(path).name}: {e}")
+        logger.warning(f"Invalid FITS file {Path(path).name}: {e}")
         return False
 
 
@@ -113,24 +131,24 @@ def _download_day(row: pd.Series, missing: Dict[str, object], cspec_dir: Path, p
         try:
             ftp = ftp_factory(utc=row["tStart"])
         except Exception as e:  # noqa: BLE001 - network errors are retried on the next pass
-            logging.error(f"[{day}] FTP connection failed: {e}")
+            logger.error(f"[{day}] FTP connection failed: {e}")
             return
 
         for det in missing["cspec"]:
             try:
                 ftp.get_cspec(str(staging), dets=[det], verbose=False)
             except Exception as e:  # noqa: BLE001
-                logging.warning(f"[{day}] CSPEC {det} transfer failed: {e}")
+                logger.warning(f"[{day}] CSPEC {det} transfer failed: {e}")
             if not _install(staging, _cspec_re(day, det), cspec_dir):
-                logging.warning(f"[{day}] CSPEC {det} not installed")
+                logger.warning(f"[{day}] CSPEC {det} not installed")
 
         if missing["poshist"]:
             try:
                 ftp.get_poshist(str(staging), verbose=False)
             except Exception as e:  # noqa: BLE001
-                logging.warning(f"[{day}] POSHIST transfer failed: {e}")
+                logger.warning(f"[{day}] POSHIST transfer failed: {e}")
             if not _install(staging, _poshist_re(day), poshist_dir):
-                logging.warning(f"[{day}] POSHIST not installed")
+                logger.warning(f"[{day}] POSHIST not installed")
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
@@ -143,8 +161,8 @@ def _describe(missing: Dict[str, object]) -> str:
 
 
 def download_days(
-    start_date: str = START_DATE,
-    end_date: str = END_DATE,
+    start_date: str,
+    end_date: str,
     cspec_dir: Optional[PathLike] = None,
     poshist_dir: Optional[PathLike] = None,
     max_attempts: int = 3,
@@ -167,7 +185,7 @@ def download_days(
     poshist_dir.mkdir(parents=True, exist_ok=True)
 
     schedule = build_day_schedule(start_date, end_date)
-    logging.info(f"Download window {start_date} -> {end_date}: {len(schedule)} days")
+    logger.info(f"Download window {start_date} -> {end_date}: {len(schedule)} days")
 
     for attempt in range(1, max_attempts + 1):
         pending = []
@@ -181,9 +199,9 @@ def download_days(
             # lazy import: gbm.finder logs into the HEASARC FTP server as soon as it is imported
             from gbm.finder import ContinuousFtp
             ftp_factory = ContinuousFtp
-        logging.info(f"[attempt {attempt}/{max_attempts}] {len(pending)} incomplete day(s)")
+        logger.info(f"[attempt {attempt}/{max_attempts}] {len(pending)} incomplete day(s)")
         for row, missing in pending:
-            logging.info(f"[{row['day']}] fetching {_describe(missing)}")
+            logger.info(f"[{row['day']}] fetching {_describe(missing)}")
             _download_day(row, missing, cspec_dir, poshist_dir, ftp_factory)
 
     final = [find_missing(d, cspec_dir, poshist_dir) for d in schedule["day"]]
@@ -192,10 +210,10 @@ def download_days(
 
     incomplete = schedule.loc[~schedule["complete"], ["day", "missing"]]
     if incomplete.empty:
-        logging.info(f"All {len(schedule)} days complete (14 CSPEC + POSHIST).")
+        logger.info(f"All {len(schedule)} days complete (14 CSPEC + POSHIST).")
     else:
         for r in incomplete.itertuples():
-            logging.warning(f"Day {r.day} still incomplete: {r.missing}")
+            logger.warning(f"Day {r.day} still incomplete: {r.missing}")
     return schedule
 
 

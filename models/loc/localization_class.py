@@ -10,7 +10,7 @@ import matplotlib.transforms as transforms
 from pyswarms.single.global_best import GlobalBestPSO
 from scipy.optimize import minimize
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
 class Localization:
@@ -123,7 +123,7 @@ class Localization:
         l'ellisse di confidenza della posizione.
         """
         if self.dim > 1:
-            logging.info("Already computed for multi-step data. Skipping single confidence interval.")
+            logger.info("Already computed for multi-step data. Skipping single confidence interval.")
             return None
 
         if self.res is None:
@@ -227,7 +227,7 @@ class Localization:
 
             if save_path:
                 plt.savefig(save_path, bbox_inches="tight", dpi=150)
-                logging.info(f"Localization plot saved to: {save_path}")
+                logger.info(f"Localization plot saved to: {save_path}")
             
             if plot_show:
                 plt.show()

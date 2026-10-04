@@ -4,9 +4,9 @@ import hashlib
 import json
 import unittest
 
-from connections.utils.config import DATA_DIR, END_DATE, START_DATE
+from connections.utils.config import LEGACY_PERIOD, period_dir
 
-RUNS = DATA_DIR / "runs" / f"{START_DATE}_{END_DATE}"
+RUNS = period_dir(*LEGACY_PERIOD)
 
 
 def sha(p):

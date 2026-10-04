@@ -8,7 +8,7 @@ from gbm.time import Met
 
 from connections.utils.config import GBM_BURST_DB, GBM_TRIG_DB
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
 def _det_idx_to_name(idx: int, prefix_burst: bool = False) -> str:
@@ -39,7 +39,7 @@ def df_burst_catalog(db_path: Path = GBM_BURST_DB) -> pd.DataFrame:
     """Fetch official Fermi GBM Burst Catalog from HEASARC, parse temporal/spectral parameters,
     and persist clean records into SQLite.
     """
-    logging.info("Downloading Burst Catalog and converting timestamps to MET...")
+    logger.info("Downloading Burst Catalog and converting timestamps to MET...")
     from gbm.finder import BurstCatalog  # lazy: gbm.finder logs into HEASARC FTP at import
     burstcat = BurstCatalog()
     df_grb = pd.DataFrame(burstcat.get_table())
@@ -85,7 +85,7 @@ def df_burst_catalog(db_path: Path = GBM_BURST_DB) -> pd.DataFrame:
     with sqlite3.connect(str(db_path)) as conn:
         df_grb_clean.to_sql("GBM_GRB", conn, if_exists="replace", index=False)
 
-    logging.info(f"Burst catalog successfully updated in: {db_path}")
+    logger.info(f"Burst catalog successfully updated in: {db_path}")
     return df_grb_clean
 
 
@@ -117,13 +117,13 @@ def build_trigger_catalog(raw: pd.DataFrame) -> pd.DataFrame:
 def df_trigger_catalog(csv_path: Path = GBM_TRIG_DB, raw: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     """Downloads the trigger catalog from HEASARC (unless `raw` is given) and stores the normalised table."""
     if raw is None:
-        logging.info("Downloading General Trigger Catalog from HEASARC...")
+        logger.info("Downloading General Trigger Catalog from HEASARC...")
         from gbm.finder import TriggerCatalog  # lazy: gbm.finder logs into HEASARC FTP at import
         raw = pd.DataFrame(TriggerCatalog().get_table())
     df_trigcat_clean = build_trigger_catalog(raw)
     df_trigcat_clean.to_csv(str(csv_path), index=False)
 
-    logging.info(f"Trigger catalog successfully updated in: {csv_path}")
+    logger.info(f"Trigger catalog successfully updated in: {csv_path}")
     return df_trigcat_clean
 
 
