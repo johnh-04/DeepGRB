@@ -23,7 +23,6 @@ from typing import Callable, Dict, List, Optional, Union
 
 import pandas as pd
 from astropy.io import fits
-from gbm.finder import ContinuousFtp
 
 from connections.utils.config import DATA_DIR, END_DATE, FOLD_CSPEC_POS, FOLD_POSHIST, START_DATE
 from utils.period import months_to_window, window_days
@@ -166,7 +165,6 @@ def download_days(
     poshist_dir = Path(poshist_dir or DATA_DIR / FOLD_POSHIST)
     cspec_dir.mkdir(parents=True, exist_ok=True)
     poshist_dir.mkdir(parents=True, exist_ok=True)
-    ftp_factory = ftp_factory or ContinuousFtp
 
     schedule = build_day_schedule(start_date, end_date)
     logging.info(f"Download window {start_date} -> {end_date}: {len(schedule)} days")
@@ -179,6 +177,10 @@ def download_days(
                 pending.append((row, missing))
         if not pending:
             break
+        if ftp_factory is None:
+            # lazy import: gbm.finder logs into the HEASARC FTP server as soon as it is imported
+            from gbm.finder import ContinuousFtp
+            ftp_factory = ContinuousFtp
         logging.info(f"[attempt {attempt}/{max_attempts}] {len(pending)} incomplete day(s)")
         for row, missing in pending:
             logging.info(f"[{row['day']}] fetching {_describe(missing)}")

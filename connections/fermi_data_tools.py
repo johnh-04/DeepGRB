@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import Optional
-from gbm.finder import BurstCatalog, TriggerCatalog
 from gbm.time import Met
 
 from connections.utils.config import PATH_GRB_TABLE, GBM_BURST_DB, GBM_TRIG_DB
@@ -41,6 +40,7 @@ def df_burst_catalog_raw(download: bool = True) -> pd.DataFrame:
     try:
         if download:
             logging.info("Downloading Burst Catalog from HEASARC...")
+            from gbm.finder import BurstCatalog  # lazy: gbm.finder logs into HEASARC FTP at import
             burstcat = BurstCatalog()
             df_grb = pd.DataFrame(burstcat.get_table())
             df_grb.to_csv(PATH_GRB_TABLE, index=False)
@@ -58,6 +58,7 @@ def df_burst_catalog(db_path: Path = GBM_BURST_DB) -> pd.DataFrame:
     and persist clean records into SQLite.
     """
     logging.info("Downloading Burst Catalog and converting timestamps to MET...")
+    from gbm.finder import BurstCatalog  # lazy: gbm.finder logs into HEASARC FTP at import
     burstcat = BurstCatalog()
     df_grb = pd.DataFrame(burstcat.get_table())
 
@@ -135,6 +136,7 @@ def df_trigger_catalog(csv_path: Path = GBM_TRIG_DB, raw: Optional[pd.DataFrame]
     """Downloads the trigger catalog from HEASARC (unless `raw` is given) and stores the normalised table."""
     if raw is None:
         logging.info("Downloading General Trigger Catalog from HEASARC...")
+        from gbm.finder import TriggerCatalog  # lazy: gbm.finder logs into HEASARC FTP at import
         raw = pd.DataFrame(TriggerCatalog().get_table())
     df_trigcat_clean = build_trigger_catalog(raw)
     df_trigcat_clean.to_csv(str(csv_path), index=False)
