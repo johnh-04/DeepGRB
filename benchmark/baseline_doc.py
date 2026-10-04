@@ -70,6 +70,11 @@ def key_numbers(run: Path) -> dict:
     return row
 
 
+def lonely_flagged(run: Path) -> int:
+    fs = pd.read_csv(run / "validation" / "flag_summary.csv").set_index("eventi")
+    return int(fs.loc["senza controparte", "almeno uno"])
+
+
 def readme_block(ref: Path, cmp: Path) -> str:
     """Short example for README.md, from the validation of the reference and comparison runs."""
     s, t = summary(ref), summary(cmp)
@@ -82,7 +87,8 @@ def readme_block(ref: Path, cmp: Path) -> str:
         f"unknown events (Table 10): **{ratio(c['unknown']['matched'], c['unknown']['in_window'])}**, R+S {ratio(*c['unknown_RS'])};",
         f"- official GBM triggers detected: {ratio(g['detected'], g['available'])}; GRB {ratio(g['grb_detected'], g['grb_available'])} "
         f"(T90 > 4.096 s {ratio(g['long_detected'], g['long_available'])}, ≤ 4.096 s {ratio(g['short_detected'], g['short_available'])});",
-        f"- events without counterpart: {s['events']['without_counterpart']} (candidates, mostly SAA-flagged).",
+        f"- events without counterpart: {s['events']['without_counterpart']} (candidates, not discoveries; {lonely_flagged(ref)} of them "
+        "with at least one post-processing flag).",
         "",
         f"With the legacy network (`{rel(cmp)}`): {t['events']['total']} events, known {t['crupi']['known']['matched']}/"
         f"{t['crupi']['known']['in_window']}, unknown {t['crupi']['unknown']['matched']}/{t['crupi']['unknown']['in_window']}, "
