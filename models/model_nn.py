@@ -26,7 +26,6 @@ import numpy as np
 import pandas as pd
 import sklearn
 import tensorflow as tf
-from astropy.time import Time
 from sklearn.metrics import mean_absolute_error as MAE
 from sklearn.metrics import median_absolute_error as MeAE
 from sklearn.model_selection import train_test_split
@@ -38,6 +37,7 @@ from tensorflow.keras.models import load_model
 import connections.utils.config as cfg
 from connections.utils.config import SAA_EXCLUSION_BINS, SAA_GAP_S
 from models.losses import loss_max, loss_median
+from utils.fermi_time import met_to_utc  # noqa: F401 (also imported from here by the tests)
 from utils.keys import get_keys
 from utils.logs import ensure_logging
 from utils.period import window_days
@@ -60,11 +60,6 @@ def set_seeds(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     tf.keras.utils.set_random_seed(seed)
-
-
-def met_to_utc(met: Sequence[float]) -> pd.Series:
-    """Fermi MET seconds -> UTC timestamps (the 'fermi' time format is on the TT scale)."""
-    return pd.Series(Time(np.asarray(met, dtype=float), format="fermi").utc.to_datetime())
 
 
 def saa_mask_indices(met: Sequence[float], time_to_del: int, gap_seconds: float = SAA_GAP_SECONDS) -> np.ndarray:

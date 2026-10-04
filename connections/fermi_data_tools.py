@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import Optional
-from gbm.time import Met
 
 from connections.utils.config import GBM_BURST_DB, GBM_TRIG_DB
+from utils.fermi_time import utc_to_met
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +45,7 @@ def df_burst_catalog(db_path: Path = GBM_BURST_DB) -> pd.DataFrame:
     df_grb = pd.DataFrame(burstcat.get_table())
 
     # Mission Elapsed Time (MET) conversion
-    df_grb["tTrigger"] = df_grb["trigger_time"].apply(
-        lambda x: Met(0).from_iso(str(x).replace(" ", "T")).met
-    )
+    df_grb["tTrigger"] = utc_to_met(df_grb["trigger_time"])
     df_grb["id"] = df_grb["trigger_name"].astype(str).str.slice(2)
     df_grb["trig_det"] = df_grb["bcat_detector_mask"].apply(
         lambda m: map_det_mask(m, burst_format=True)
@@ -89,10 +87,6 @@ def df_burst_catalog(db_path: Path = GBM_BURST_DB) -> pd.DataFrame:
     return df_grb_clean
 
 
-def _iso_to_met(values: pd.Series) -> pd.Series:
-    return values.apply(lambda x: Met(0).from_iso(str(x).replace(" ", "T")).met)
-
-
 def build_trigger_catalog(raw: pd.DataFrame) -> pd.DataFrame:
     """
     Normalises the HEASARC fermigtrig table.
@@ -103,9 +97,9 @@ def build_trigger_catalog(raw: pd.DataFrame) -> pd.DataFrame:
     - trig_met / trigger_time: the trigger instant, used to match events to the catalog.
     """
     df = raw.copy()
-    df["met_time"] = _iso_to_met(df["time"])
-    df["met_end_time"] = _iso_to_met(df["end_time"])
-    df["trig_met"] = _iso_to_met(df["trigger_time"])
+    df["met_time"] = utc_to_met(df["time"])
+    df["met_end_time"] = utc_to_met(df["end_time"])
+    df["trig_met"] = utc_to_met(df["trigger_time"])
     df["detector_mask"] = df["detector_mask"].apply(lambda m: map_det_mask(m, burst_format=False))
     cols = [
         "name", "trigger_name", "trigger_type", "met_time", "met_end_time", "trig_met",

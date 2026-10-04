@@ -4,7 +4,7 @@ from typing import Sequence
 
 import numpy as np
 import pandas as pd
-from astropy.time import Time
+from astropy.time import Time, TimeDelta
 
 _EPOCH = Time("2001-01-01T00:00:00", scale="utc")
 
@@ -23,4 +23,4 @@ def utc_to_met(utc: Sequence) -> np.ndarray:
 def met_to_utc(met: Sequence[float]) -> pd.Series:
     """MET seconds -> UTC timestamps."""
     met = np.asarray(met, dtype=float)
-    return pd.Series((_EPOCH + met / 86400.0).to_datetime())
+    return pd.Series((_EPOCH + TimeDelta(met / 86400.0, format="jd")).to_datetime())
