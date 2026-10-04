@@ -1,4 +1,6 @@
 import logging
+import os
+from pathlib import Path
 from typing import Tuple, List, Dict, Any, Optional
 
 import numpy as np
@@ -7,7 +9,10 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
-from pyswarms.single.global_best import GlobalBestPSO
+# pyswarms reconfigures the root logger (dictConfig: stderr handler + ./report.log) every time an
+# optimizer is created; an incremental, empty configuration turns that into a no-op.
+os.environ.setdefault("LOG_CFG", str(Path(__file__).with_name("pyswarms_logging.yaml")))
+from pyswarms.single.global_best import GlobalBestPSO  # noqa: E402
 from scipy.optimize import minimize
 
 logger = logging.getLogger(__name__)
@@ -15,8 +20,8 @@ logger = logging.getLogger(__name__)
 
 class Localization:
     """
-    Localizza la sorgente di un evento transient (RA, Dec) confrontando i conteggi 
-    osservati nei vari rivelatori NaI con la loro risposta geometrica angolare (legge del coseno).
+    Localizes the source of a transient (RA, Dec) by comparing the counts observed in the
+    NaI detectors with their geometric angular response (cosine law).
     """
 
     def __init__(
@@ -27,17 +32,17 @@ class Localization:
         counts_bkg: np.ndarray
     ) -> None:
         """
-        :param list_ra: Array di coordinate RA dei puntamenti dei rivelatori (in radianti)
-        :param list_dec: Array di coordinate Dec dei puntamenti dei rivelatori (in radianti)
-        :param counts_frg: Conteggi osservati nel foreground
-        :param counts_bkg: Conteggi stimati per il background
+        :param list_ra: RA of the detector pointings (radians)
+        :param list_dec: Dec of the detector pointings (radians)
+        :param counts_frg: observed (foreground) counts
+        :param counts_bkg: estimated background counts
         """
         self.list_ra = np.asarray(list_ra, dtype=np.float64)
         self.list_dec = np.asarray(list_dec, dtype=np.float64)
         self.counts_frg = np.asarray(counts_frg, dtype=np.float64)
         self.counts_bkg = np.asarray(counts_bkg, dtype=np.float64)
         
-        # Segnale netto attribuibile alla sorgente (taglio a zero per fluttuazioni negative)
+        # Net signal of the source (negative fluctuations clipped to zero)
         self.counts = np.maximum(self.counts_frg - self.counts_bkg, 0.0)
         self.res: Optional[np.ndarray] = None
         self.list_pos: Optional[np.ndarray] = None
@@ -52,8 +57,8 @@ class Localization:
     @staticmethod
     def vect_cos(a: Tuple[Any, Any], b: Tuple[Any, Any]) -> np.ndarray:
         """
-        Calcola il coseno dell'angolo tra due vettori celesti a=(ra_a, dec_a) e b=(ra_b, dec_b).
-        Taglia a zero valori negativi (rivelatori che non vedono la sorgente perché opposti).
+        Cosine of the angle between two sky directions a=(ra_a, dec_a) and b=(ra_b, dec_b).
+        Negative values are clipped to zero (detectors facing away from the source).
         """
         cos_theta = (
             np.cos(a[0]) * np.cos(a[1]) * np.cos(b[0]) * np.cos(b[1]) +
@@ -64,7 +69,7 @@ class Localization:
 
     def loss_position(self, data: List[Tuple[float, float, float]], x: np.ndarray) -> np.ndarray:
         """
-        Funzione di costo quadratica per PSO: confronta i conteggi target con quelli teorici scalati.
+        Quadratic PSO cost: compares the target counts with the scaled expected ones.
         """
         ra = x[:, 0]
         dec = x[:, 1]
@@ -79,7 +84,7 @@ class Localization:
         return total_loss
 
     def _fit_core(self, list_ra: np.ndarray, list_dec: np.ndarray, counts: np.ndarray, iters: int = 1000) -> Dict[str, float]:
-        """Esegue il Particle Swarm Optimization su una singola istanza di conteggi."""
+        """Particle Swarm Optimization on one set of counts."""
         min_c = float(np.min(counts))
         max_c = float(np.max(counts)) * 2.0
         
@@ -99,8 +104,7 @@ class Localization:
 
     def fit(self, iters: int = 1000) -> Dict[str, float]:
         """
-        Esegue il fitting PSO globale su tutte le dimensioni temporali/canali.
-        Sostituito il vecchio DataFrame.append con accumulo in lista.
+        Global PSO fit on every time step / channel set.
         """
         records = []
         for i in range(self.dim):
@@ -119,8 +123,7 @@ class Localization:
 
     def fit_conf_int(self, iters: int = 1000) -> Optional[np.ndarray]:
         """
-        Esegue il campionamento Monte Carlo (perturbazioni Poissoniane) per calcolare
-        l'ellisse di confidenza della posizione.
+        Monte Carlo sampling (Poisson perturbations) of the confidence ellipse of the position.
         """
         if self.dim > 1:
             logger.info("Already computed for multi-step data. Skipping single confidence interval.")
@@ -139,7 +142,7 @@ class Localization:
         det_dec = self.list_dec[0]
 
         for i in range(iters):
-            # Campionamento Poissoniano dei conteggi osservati
+            # Poisson resampling of the observed counts
             sampled_frg = np.random.poisson(frg_mean)
             sampled_bkg = np.random.poisson(bkg_mean)
             counts = np.maximum(sampled_frg - sampled_bkg, 0.0)
@@ -179,7 +182,7 @@ class Localization:
         n_std: float = 1.0
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Calcola matrice di covarianza ed ellisse di errore; supporta salvataggio headless.
+        Covariance matrix and error ellipse; can be saved without a display.
         """
         if self.list_pos is None:
             raise RuntimeError("No position list available. Run fit() or fit_conf_int() first.")

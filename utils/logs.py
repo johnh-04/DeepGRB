@@ -57,7 +57,7 @@ def setup_logging(log_file: Optional[Path] = None, level: int = logging.INFO) ->
             root.addHandler(fh)
     root.setLevel(level)
     # third-party chatter
-    for name in ("matplotlib", "h5py", "absl", "PIL", "numexpr"):
+    for name in ("matplotlib", "h5py", "absl", "PIL", "numexpr", "pyswarms"):
         logging.getLogger(name).setLevel(logging.WARNING)
 
 

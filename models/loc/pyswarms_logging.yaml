@@ -1,0 +1,3 @@
+# Read by pyswarms (LOG_CFG): incremental and empty, so it leaves the DeepGRB logging untouched.
+version: 1
+incremental: true
