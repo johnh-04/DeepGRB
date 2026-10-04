@@ -243,3 +243,46 @@ Richiesta: poter riaddestrare la rete 2019 da zero con il codice attuale, in run
 - Nessun training reale sui dati 2019 (né su CPU né su GPU): tempi, memoria e convergenza non misurati.
 - Su questo nodo TensorFlow non vede GPU. Il comportamento con una GPU (memory growth, velocità) non è stato provato.
 - Riproducibilità bit a bit tra due training con lo stesso seed: su GPU TensorFlow non è deterministico per default (non attivato `TF_DETERMINISTIC_OPS`, per non cambiare la ricetta).
+
+---
+
+## 2026-10-04 — Domanda sul learning rate del training seed1 (solo documentazione)
+
+Osservazione nel log `logs/train_seed1_clean.log`: i parametri dichiarano `lr=0.0008`, ma le righe di epoca mostrano `lr 1.00e-02` nelle epoche 1–4; la loss resta 109.5 / 106.1 / 105.3 nelle epoche 1–3 (val_loss 242.6 alla 3) e crolla a 12.1 alla 4.
+
+### Da dove viene
+- **Schedule di upstream**, non nostra. Introdotta da rcrupi nel commit `85542b5` (2023-01-14, "regulate learning rate with a scheduler piecewise") in `models/model_nn.py`:
+  `scheduler(epoch)`: `lr*12.5` se `epoch < 4`, `lr*2` se `4 <= epoch < 12`, `lr/2` da `epoch >= 12`.
+- Il nostro `_lr_schedule` in `models/model_nn.py` (commit `99e763f`) ne è la trascrizione identica, agganciata con `LearningRateScheduler`.
+- Il valore base `lr = 0.0008` viene da `NN_PARAMS` in `pipeline/pipeline_bkg.py`, uguale alla chiamata upstream `nn.train(..., lr=0.0008, ...)` in `pipeline/pipeline_bkg.py` di upstream.
+- Keras numera le epoche da 0, quindi:
+  - epoche 1–4 del log → 0.0008 × 12.5 = **1.0e-2**;
+  - epoche 5–12 → ×2 = **1.6e-3**;
+  - dalla 13 → ×0.5 = **4.0e-4**.
+
+  Coincide con il log (`1.60e-03` dall'epoca 5, `4.00e-04` dall'epoca 13).
+- La riga `[train] parameters` stampa il lr **base** passato a `train()`; le righe di epoca stampano il lr **effettivo** dell'ottimizzatore. Il valore iniziale di Nadam viene sostituito dalla schedule già dalla prima epoca.
+
+### Il plateau a loss ≈105 (`python -m benchmark.analysis.lr_check` → `benchmark/analysis/out/lr_check.json`)
+Sullo stesso pool e split del training (1 164 300 righe di fit, 498 987 di validazione):
+- MAE di un predittore sempre **zero**: 205.8 (fit), 205.9 (validazione); è anche il rate medio dei target;
+- MAE della **mediana per canale**: 20.4 (fit e validazione).
+
+Il plateau delle epoche 1–3 (≈105) non è quindi "rete con tutte le uscite a zero" (sarebbe ≈206), ma resta molto peggio del predittore banale per canale (≈20). È compatibile con una parte delle uscite ReLU spente durante la fase a lr alto, che si riattivano all'epoca 4. **Non verificato**: si salva solo il miglior checkpoint, non lo stato alle epoche 1–3.
+
+Un indizio che upstream conoscesse questa fase: il codice di Crupi disegnava la curva di training a partire dalla quinta epoca (`plt.plot(history.history['loss'][4:])`).
+
+### Collegato (trovato nell'analisi orbitale, `docs/ORBIT_ANALYSIS.md` §5)
+- La rete seed1 prevede fondo 0 in 212 celle (6 bin interi): il log di training stampa `[ERROR] Predicted rate equal to 0 in 212 cells`. La rete legacy ne ha 0.
+- `models/analyze.py::event_significance` non scarta B ≤ 0 (FOCuS sì), e due eventi seed1 (6 e 9, σ_C 881 e 39) sono artefatti di questo.
+- Correzione possibile, **non applicata** (vincolo di sola lettura; cambierebbe gli eventi → `ENGINE_VERSION` 3).
+
+Nessuna modifica all'addestramento.
+
+## 2026-10-04 — Analisi orbitale degli eventi senza controparte
+
+Vedi `docs/ORBIT_ANALYSIS.md`, generato da:
+- `benchmark/analysis/orbit_analysis.py` (calcolo: CSV, PNG, `summary.json` in `benchmark/analysis/out/`, non versionati);
+- `benchmark/analysis/orbit_report.py` (documento).
+
+Sola lettura sul motore. Nota: `engine-v2/manifest.json` era già stato modificato da una pipeline lanciata senza `DEEPGRB_RUN_LABEL` (voce del 2026-10-04 07:41; pred/trig/results intatti).
