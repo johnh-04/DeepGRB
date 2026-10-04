@@ -7,11 +7,17 @@ DeepGRB pipeline, steps 1-5 (Crupi et al. 2023 engine).
 4. Poisson-FOCuS -> run_dir/trig/{trig,offset}.csv
 5. triggers and events -> run_dir/results/{triggers_table,events_table}.csv
 
-Every step of 3-5 is skipped when its outputs already exist in run_dir, which is
-keyed by period and ENGINE_VERSION (connections/utils/config.py). Inputs are never
-overwritten. Validation (Phase 3) and classification (Phase 4) run separately.
+Default run: every step of 3-5 is skipped when its outputs already exist in run_dir,
+which is keyed by period and ENGINE_VERSION (connections/utils/config.py).
+Labelled run (DEEPGRB_RUN_LABEL): a new folder run_dir-<label> and a new model bundle;
+both must not exist yet. Inputs are never overwritten. Options: utils/run_options.py;
+DEEPGRB_SKIP_DOWNLOAD=1 skips steps 1-2 after checking that all daily tables exist.
+Validation (Phase 3) and classification (Phase 4) run separately.
 
-Usage (from repo root):  python pipeline/pipeline_bkg.py
+Usage (from repo root):  python -u pipeline/pipeline_bkg.py
+Retraining 2019 (example):
+  DEEPGRB_RUN_LABEL=seed1 DEEPGRB_TRAIN_SEED=1 DEEPGRB_FORCE_TRAIN=1 DEEPGRB_SKIP_DOWNLOAD=1 \
+      python -u pipeline/pipeline_bkg.py
 """
 
 import json
@@ -51,6 +57,8 @@ from models.model_nn import ModelNN
 from models.preprocess import build_table
 from models.trigger import run_trigger
 from models.trigs.focus import build_focus_runner
+from utils.period import window_days
+from utils.run_options import RunOptionsError, obtain_model, resolve_run_options
 
 logging.basicConfig(format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO, datefmt="%Y-%m-%d %H:%M:%S")
 
@@ -59,27 +67,28 @@ logging.basicConfig(format="%(asctime)s [%(levelname)s] %(message)s", level=logg
 # ----------------------------------------------------------------------
 ERANGE = {"n": [(28, 50), (50, 300), (300, 500)], "b": [(756, 5025), (5025, 50000)]}
 NN_PARAMS = {"loss_type": "mean", "units": 2048, "epochs": 64, "lr": 0.0008, "bs": 2048, "dropout_rate": 0.02}
-TRAIN_SEED = 0
 TIME_TO_DEL_BINS = 150  # upstream: 150 bins (~614 s) each side of a > 500 s gap
 FOCUS_MU_MIN = 1.2
 FOCUS_T_MAX = 50  # bins (204.8 s), as upstream
 ANALYZE_THRESHOLD = 3.0  # sigma, range r1
 
-# Background model: one network per period (paper). For the 2019 baseline period the
-# paper-faithful model trained on 2026-09-21 by upstream-equivalent code is reused.
-LEGACY_PERIOD = ("2019-03-01", "2019-06-30")
-LEGACY_H5 = DATA_DIR / FOLD_NN / "model_03-2019_07-2019_4.4_2026-09-21.h5"
-if (START_DATE, END_DATE) == LEGACY_PERIOD:
-    MODEL_BUNDLE = DATA_DIR / FOLD_NN / "bundles" / LEGACY_H5.stem
-else:
-    MODEL_BUNDLE = DATA_DIR / FOLD_NN / "bundles" / f"model_{START_DATE}_{END_DATE}_seed{TRAIN_SEED}"
-# A new (long) training must be explicitly enabled: DEEPGRB_ALLOW_TRAINING=1
-ALLOW_TRAINING = os.environ.get("DEEPGRB_ALLOW_TRAINING") == "1"
+# Background model: one network per period (paper). Without a run label, the 2019 baseline
+# period reuses the paper-faithful model trained on 2026-09-21 by upstream-equivalent code;
+# labelled runs (utils/run_options.py) train or reuse their own bundle and never use it.
+try:
+    OPTS = resolve_run_options(os.environ, START_DATE, END_DATE, run_dir(), DATA_DIR / FOLD_NN)
+except RunOptionsError as e:
+    if __name__ == "__main__":
+        sys.exit(f"[run options] {e}")
+    raise
+SKIP_DOWNLOAD = os.environ.get("DEEPGRB_SKIP_DOWNLOAD") == "1"
+TRAIN_SEED = OPTS.seed
+MODEL_BUNDLE = OPTS.bundle_dir
 
 cspec_dir = DATA_DIR / FOLD_CSPEC_POS
 poshist_dir = DATA_DIR / FOLD_POSHIST
 bkg_dir = DATA_DIR / FOLD_BKG
-RUN = run_dir()
+RUN = OPTS.run_dir
 PRED_FRG, PRED_BKG = RUN / "pred" / "frg.csv", RUN / "pred" / "bkg.csv"
 TRIG, OFFSET = RUN / "trig" / "trig.csv", RUN / "trig" / "offset.csv"
 RESULTS = RUN / "results"
@@ -93,7 +102,10 @@ def parameters() -> dict:
         "energy_ranges_keV": ERANGE,
         "nn": NN_PARAMS,
         "train_seed": TRAIN_SEED,
+        "run_label": OPTS.label,
         "model_bundle": str(MODEL_BUNDLE.relative_to(REPO_ROOT)),
+        "model_mode": OPTS.mode,
+        "force_train": OPTS.force_train,
         "saa_gap_s": 500,
         "saa_exclusion_bins_each_side": TIME_TO_DEL_BINS,
         "focus": {"mu_min": FOCUS_MU_MIN, "t_max_bins": FOCUS_T_MAX, "input": "rates (counts/s)"},
@@ -104,18 +116,43 @@ def parameters() -> dict:
     }
 
 
-def write_manifest() -> None:
-    """Prints the parameters and records them, with code version, in run_dir/manifest.json."""
-    params = parameters()
-    for line in json.dumps(params, indent=2).splitlines():
-        logging.info(f"[params] {line}")
+def git_state() -> tuple:
+    """(commit, engine code dirty) of the working tree."""
     try:
         commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True).stdout.strip()
         dirty = bool(subprocess.run(["git", "status", "--porcelain", "--", "models", "pipeline", "connections", "utils"],
                                     cwd=REPO_ROOT, capture_output=True, text=True).stdout.strip())
     except OSError:
         commit, dirty = "unknown", True
-    RUN.mkdir(parents=True, exist_ok=True)
+    return commit, dirty
+
+
+def report_devices() -> None:
+    """Prints the GPUs seen by TensorFlow, or a warning that training would run on CPU."""
+    gpus = tf.config.list_physical_devices("GPU")
+    if gpus:
+        for gpu in gpus:
+            try:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            except RuntimeError as e:
+                logging.warning(f"Could not enable memory growth on {gpu.name}: {e}")
+        print(f"[devices] GPU detected: {', '.join(g.name for g in gpus)}", flush=True)
+    else:
+        print("[devices] WARNING: no GPU detected by TensorFlow; "
+              + ("TRAINING WILL RUN ON CPU (much slower)." if OPTS.mode == "train" else "inference runs on CPU."),
+              flush=True)
+
+
+def write_manifest() -> None:
+    """Prints the parameters and records them, with code version, in run_dir/manifest.json."""
+    params = parameters()
+    for line in json.dumps(params, indent=2).splitlines():
+        logging.info(f"[params] {line}")
+    commit, dirty = git_state()
+    if OPTS.is_labelled:
+        RUN.mkdir(parents=True, exist_ok=False)  # labelled runs never reuse a folder
+    else:
+        RUN.mkdir(parents=True, exist_ok=True)
     manifest_path = RUN / "manifest.json"
     history = json.loads(manifest_path.read_text())["runs"] if manifest_path.exists() else []
     history.append({"started": pd.Timestamp.now(tz="UTC").isoformat(), "git_commit": commit, "code_dirty": dirty,
@@ -124,6 +161,16 @@ def write_manifest() -> None:
     manifest_path.write_text(json.dumps({"parameters": params, "runs": history}, indent=2))
     if dirty:
         logging.warning("Engine code has uncommitted changes: results are not tied to a commit.")
+
+
+def check_daily_tables() -> None:
+    """With DEEPGRB_SKIP_DOWNLOAD=1: no download/preprocess, but every day must have its table."""
+    print(f"\n[STEP 1-2/5] Skipped (DEEPGRB_SKIP_DOWNLOAD=1): checking daily tables in {bkg_dir}", flush=True)
+    missing = [d for d in window_days(START_DATE, END_DATE) if not (bkg_dir / f"{d}.csv").exists()]
+    if missing:
+        sys.exit(f"[STEP 1-2/5] {len(missing)} daily table(s) missing ({', '.join(missing[:10])}"
+                 f"{' ...' if len(missing) > 10 else ''}): run without DEEPGRB_SKIP_DOWNLOAD.")
+    logging.info(f"All {len(window_days(START_DATE, END_DATE))} daily tables present.")
 
 
 def run_step_download() -> pd.DataFrame:
@@ -153,15 +200,12 @@ def run_step_neural_network() -> None:
 
     nn = ModelNN(START_DATE, END_DATE, bkg_dir=bkg_dir, trig_catalog_path=GBM_TRIG_DB)
     nn.prepare(bool_del_trig=True)
-    if MODEL_BUNDLE.exists():
-        nn.load_bundle(MODEL_BUNDLE)
-    elif (START_DATE, END_DATE) == LEGACY_PERIOD and LEGACY_H5.exists():
-        logging.info(f"Wrapping legacy model {LEGACY_H5.name} into a bundle (scaler refitted, split seed fixed).")
-        nn.bundle_from_legacy_h5(LEGACY_H5, MODEL_BUNDLE)
-    elif ALLOW_TRAINING:
-        nn.train(MODEL_BUNDLE, seed=TRAIN_SEED, **NN_PARAMS)
-    else:
-        raise RuntimeError(f"No model bundle {MODEL_BUNDLE.name}: set DEEPGRB_ALLOW_TRAINING=1 to train one.")
+    logging.info(f"Model mode: {OPTS.mode} -> {MODEL_BUNDLE}")
+    commit, dirty = git_state()
+    obtain_model(nn, OPTS, NN_PARAMS, extra_metadata={
+        "git_commit": commit, "code_dirty": dirty, "run_label": OPTS.label, "run_dir": str(RUN.relative_to(REPO_ROOT)),
+        "trained_at": pd.Timestamp.now(tz="UTC").isoformat(),
+    })
     nn.predict(PRED_FRG, PRED_BKG, time_to_del=TIME_TO_DEL_BINS)
 
 
@@ -193,9 +237,14 @@ if __name__ == "__main__":
     print(f"  DEEPGRB ENGINE {START_DATE} -> {END_DATE}  (engine v{ENGINE_VERSION})")
     print(f"  run folder: {RUN}")
     print("=" * 65)
+    print(f"  model: {OPTS.mode} {MODEL_BUNDLE.name}  (seed {TRAIN_SEED}, label {OPTS.label})", flush=True)
+    report_devices()
     write_manifest()
-    df_days = run_step_download()
-    run_step_preprocess(df_days)
+    if SKIP_DOWNLOAD:
+        check_daily_tables()
+    else:
+        df_days = run_step_download()
+        run_step_preprocess(df_days)
     run_step_neural_network()
     run_step_trigger()
     run_step_analyze()
