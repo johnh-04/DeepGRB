@@ -10,7 +10,8 @@ import unittest
 from pathlib import Path
 
 from tests.test_model_nn import ModelTestCase
-from utils.run_options import LEGACY_H5_NAME, RunOptionsError, obtain_model, resolve_run_options
+from utils.run_options import (LEGACY_H5_NAME, RunOptionsError, bundle_checksum, manifest_model, obtain_model,
+                               parameter_mismatches, resolve_run_options)
 
 REPO = Path(__file__).resolve().parents[1]
 PY = sys.executable
@@ -139,6 +140,66 @@ class TestReuseAcrossEngineVersions(OptionsTestCase):
         (self.runs / "engine-v3-seed1").mkdir()
         with self.assertRaises(RunOptionsError):
             self.resolve_v3(DEEPGRB_RUN_LABEL="seed1")
+
+
+class TestResumeExistingRun(OptionsTestCase):
+    """An existing run with its predictions only resumes the missing steps; it is never retrained."""
+
+    def make_run(self, name: str, manifest: dict):
+        run = self.runs / name
+        for f in ("pred/frg.csv", "pred/bkg.csv", "trig/trig.csv", "trig/offset.csv"):
+            (run / f).parent.mkdir(parents=True, exist_ok=True)
+            (run / f).write_text("x")
+        (run / "manifest.json").write_text(json.dumps(manifest))
+        return run
+
+    def test_labelled_run_with_predictions_resumes(self):
+        self.make_run("engine-v2-seed1", {"model": {"bundle": "data/nn_model/bundles/b1", "seed": 1}})
+        o = self.resolve(DEEPGRB_RUN_LABEL="seed1")
+        self.assertEqual((o.mode, o.run_dir, str(o.bundle_dir)), ("resume", self.runs / "engine-v2-seed1", "data/nn_model/bundles/b1"))
+        with self.assertRaises(RunOptionsError):  # no model is ever needed (or loaded) for it
+            obtain_model(object(), o, {})
+
+    def test_force_train_into_existing_run_stops(self):
+        self.make_run("engine-v2-seed1", {})
+        with self.assertRaises(RunOptionsError):
+            self.resolve(DEEPGRB_RUN_LABEL="seed1", DEEPGRB_TRAIN_SEED="1", DEEPGRB_FORCE_TRAIN="1")
+
+    def test_default_run_with_predictions_resumes(self):
+        self.make_run("engine-v2", {"parameters": {"model_bundle": "legacy"}})
+        o = self.resolve()
+        self.assertEqual((o.mode, str(o.bundle_dir)), ("resume", "legacy"))
+
+
+class TestManifest(unittest.TestCase):
+    def test_model_entry_old_and_new_formats(self):
+        self.assertEqual(manifest_model({"model": {"bundle": "b", "seed": 1}}), {"bundle": "b", "seed": 1})
+        self.assertEqual(manifest_model({"parameters": {"model_bundle": "b0"}}), {"bundle": "b0"})
+        # a reused run: the bundle of the source run produced the predictions
+        self.assertEqual(manifest_model({"parameters": {"model_bundle": "b0"}, "reused_from": {"model_bundle": "b1"}}),
+                         {"bundle": "b1"})
+        self.assertEqual(manifest_model({}), {})
+
+    def test_parameter_mismatches(self):
+        rec = {"period": {"start_date": "2019-03-01", "end_date": "2019-06-30"}, "engine_version": "3", "merge_s": 600,
+               "saa_gap_s": 500, "train_seed": 0, "model_mode": "reuse_pred"}
+        cur = {"period": {"start_date": "2019-03-01", "end_date": "2019-06-30"}, "engine_version": "3", "merge_s": 600,
+               "saa_gap_s": 500.0, "flags": {}}
+        self.assertEqual(parameter_mismatches(rec, cur), {})  # model fields of old manifests are not compared
+        self.assertEqual(set(parameter_mismatches({**rec, "merge_s": 300}, cur)), {"merge_s"})
+        self.assertEqual(set(parameter_mismatches({**rec, "engine_version": "2"}, cur)), {"engine_version"})
+
+    def test_bundle_checksum_detects_changes(self):
+        with tempfile.TemporaryDirectory() as d:
+            b = Path(d) / "bundle"
+            self.assertIsNone(bundle_checksum(b))
+            b.mkdir()
+            (b / "model.keras").write_bytes(b"w1")
+            (b / "scaler.joblib").write_bytes(b"s")
+            c1 = bundle_checksum(b)
+            self.assertEqual(c1, bundle_checksum(b))
+            (b / "model.keras").write_bytes(b"w2")
+            self.assertNotEqual(c1, bundle_checksum(b))
 
 
 class FakeNN:
