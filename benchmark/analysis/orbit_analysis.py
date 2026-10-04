@@ -460,7 +460,7 @@ def main() -> None:
     ax.hist(null["t_since_saa_exit_s"] / orbit.period, bins=bins, density=True, color="0.7", label="tempi casuali validi")
     for g, c in (("matched", "black"), ("A", "tab:red"), ("B", "tab:blue"), ("other", "tab:green")):
         sub = events["ref"].loc[events["ref"]["group"] == g, "t_since_saa_exit_s"] / orbit.period
-        ax.hist(sub, bins=bins, density=True, histtype="step", lw=2, color=c, label=f"{R} {g} ({len(sub)})")
+        ax.hist(sub, bins=bins, density=True, histtype="step", lw=2, color=c, label=f"{RUNS['ref']['run'].name} {g} ({len(sub)})")
     ax.set_xlabel("tempo dall'ultima uscita dalla SAA [orbite]")
     ax.set_ylabel("densità")
     ax.legend(fontsize=8)
