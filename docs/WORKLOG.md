@@ -286,3 +286,60 @@ Vedi `docs/ORBIT_ANALYSIS.md`, generato da:
 - `benchmark/analysis/orbit_report.py` (documento).
 
 Sola lettura sul motore. Nota: `engine-v2/manifest.json` era già stato modificato da una pipeline lanciata senza `DEEPGRB_RUN_LABEL` (voce del 2026-10-04 07:41; pred/trig/results intatti).
+
+---
+
+## 2026-10-04 — Engine v3, flag SAA, correzioni al report
+
+### Parte 1 — fondo previsto ≤ 0 (engine v3)
+- `3f93eb5`: in `models/analyze.py::event_significance` un bin è valido solo se il fondo previsto è > 0 su tutti i canali, come in FOCuS. La stessa regola vale nella ricerca del picco di `localize_event`. Test: B = 0 e B < 0 (falliscono sul codice precedente).
+- `94f2a21`: `ENGINE_VERSION = 3` (cambia solo lo step 5).
+  - Una run v3 riusa `pred/` e `trig/` della run v2 corrispondente: symlink dichiarati nel manifest (`reused_from`: run, bundle, commit d'origine); nessun modello caricato.
+  - Il manifest registra `predicted_zero_cells`: celle e bin con fondo previsto ≤ 0.
+  - Il training forzato non riusa mai.
+- Run: `engine-v3` (da `engine-v2`, rete legacy) e `engine-v3-seed1` (da `engine-v2-seed1`), lanciate con `DEEPGRB_SKIP_DOWNLOAD=1` (più `DEEPGRB_RUN_LABEL=seed1` per la seconda).
+- **Test (a)** (`tests/test_engine_v3_outputs.py`): con la rete legacy (0 celle a zero) `events_table.csv` e `triggers_table.csv` di v3 sono identici byte per byte a v2.
+- **Test (c)** (`python -m benchmark.audit.compare_runs`, output in `benchmark/out/v3-seed1/compare_v2-seed1_v3-seed1.md`): 136 → 136 eventi, 136 coppie, **un solo evento cambia**:
+  - **evento 6** (2019-03-07 01:51:23, 41 s, 12 rivelatori): S_r0/S_r1/S_r2/S_C da 880.9/764.9/99.2/880.9 a **29.1/25.7/14.3/29.1**; tempo, durata e rivelatori invariati.
+  - **L'evento 9 non cambia (diversamente dall'atteso):** la sua finestra di S inizia un bin dopo i 3 bin a zero (2019-03-09 04:40:26–34). L'avevo segnalato in ORBIT_ANALYSIS con un margine di ±60 bin troppo largo; corretto in `b50f799`.
+  - Entrambi gli eventi sono attaccati a un tratto di 3 bin in cui la rete seed1 prevede 0 ed esistono solo con quella rete: probabili artefatti, non rimossi dal v3 (che corregge S, non i trigger).
+- Validazione v3: nessun riferimento perso né guadagnato rispetto a v2 (insiemi abbinati identici per Crupi noti, inediti e GBM, per entrambe le reti).
+
+### Parte 2 — flag SAA di post-processing (`4765d74`, `models/saa_flags.py`)
+Colonne aggiunte all'output della validazione (`events_flags.csv`); l'elenco degli eventi non cambia.
+
+| run | abbinati flaggati | senza controparte flaggati | `saa_edge_short_passage` | `saa_region_proximity` |
+|---|---|---|---|---|
+| engine-v3 (legacy) | 1/91 | 38/53 | 24 (tutti senza controparte) | 39 |
+| engine-v3-seed1 | 1/90 | 29/46 | 17 (tutti senza controparte) | 30 |
+
+L'unico abbinato flaggato è l'evento 4 (2019-03-06 06:42), abbinato all'inedito di Crupi `2019_3`, che lui classifica UNC(LP): coerente con il flag.
+
+### Parte 3 — correzioni
+- `69366c5` validate:
+  - il seed del modello viene letto da `metadata.json` del bundle (quello della run d'origine se le predizioni sono riusate);
+  - "Numero eventi ~100" diventa informativo, con i conteggi per rete (144 legacy, 136 seed1);
+  - i limiti riportano la sovrapposizione tra reti (126 coppie, 18 solo legacy, 10 solo seed1), i passaggi SAA brevi non mascherati (45), il bordo nord della SAA e le celle a zero.
+- `c3246c3` training: controllo di convergenza non bloccante.
+  - Riferimenti calcolati sullo stesso split: MAE di un predittore costante (mediana per canale) e di uno sempre a zero, come in `lr_check.json`.
+  - Salvato in `metadata.json` (`convergence`) e stampato nel log; avviso se il val_loss finale non scende sotto metà del riferimento costante.
+  - L'addestramento non cambia.
+
+### Risposta: learning rate del training (log seed1)
+- **Da dove vengono 1e-2 (epoche 1–4), 1.6e-3 (5–12) e 4e-4 (da 13).** Dalla **schedule a gradini di upstream** (`LearningRateScheduler`), introdotta da rcrupi nel commit `85542b5` (2023-01-14):
+  - `lr*12.5` se `epoch < 4`, `lr*2` se `4 <= epoch < 12`, `lr/2` dopo (epoche numerate da 0);
+  - con lr base 0.0008 dà 1.0e-2, 1.6e-3 e 4.0e-4;
+  - il nostro `_lr_schedule` ne è la trascrizione identica (`99e763f`);
+  - **non** c'è nessun `ReduceLROnPlateau`, né in upstream né nel nostro codice (verificato con grep su entrambi): le riduzioni sono a epoche fisse, non dipendono dalla loss.
+- **Perché i parametri dichiarano lr=0.0008.**
+  - 0.0008 è il lr **base** passato a `train()`: `NN_PARAMS` della pipeline, uguale alla chiamata di upstream.
+  - Nadam viene creato con quel valore, ma `LearningRateScheduler` imposta il lr all'inizio di ogni epoca, già dalla prima.
+  - La riga `[train] parameters` stampa quindi il valore base; le righe di epoca il valore effettivo.
+- **Perché le epoche 1–3 stanno a loss ≈105.** Riferimenti sullo stesso split (`benchmark/analysis/out/lr_check.json`):
+  - predittore sempre zero: 205.9;
+  - mediana costante per canale: 20.4.
+
+  La loss di training a 109.5/106.1/105.3 è circa metà di quella "a zero", e alla terza epoca il **val_loss sale a 242.6, sopra il predittore a zero**: la rete non è solo ferma, è instabile. È la fase con lr 12.5 volte il valore base (1e-2) su Nadam, BatchNorm e uscite ReLU. Un meccanismo compatibile è che una parte delle uscite resti a zero e le altre oscillino.
+
+  All'epoca 4, ancora a 1e-2, la loss scende a 12.1, e con 1.6e-3 si stabilizza (val 4.9 all'epoca 6). La scelta di upstream sembra deliberata: Crupi disegnava la curva di training a partire dalla quinta epoca (`history['loss'][4:]`). Il meccanismo esatto non è verificabile, perché si salva solo il miglior checkpoint.
+- Nessuna modifica all'addestramento. Il nuovo controllo di convergenza guarda solo il risultato finale: su seed1 darebbe circa 4.4/20.4 ≈ 0.21 (OK).
