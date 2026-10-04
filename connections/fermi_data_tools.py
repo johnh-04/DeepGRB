@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 from gbm.time import Met
 
-from connections.utils.config import PATH_GRB_TABLE, GBM_BURST_DB, GBM_TRIG_DB
+from connections.utils.config import GBM_BURST_DB, GBM_TRIG_DB
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
@@ -33,24 +33,6 @@ def map_det_mask(mask_str: str, burst_format: bool = False) -> str:
     active_indices = [i for i, bit in enumerate(mask_str) if bit == "1"]
     mapped = [_det_idx_to_name(idx, prefix_burst=burst_format) for idx in active_indices]
     return str(mapped)
-
-
-def df_burst_catalog_raw(download: bool = True) -> pd.DataFrame:
-    """Downloads or loads the raw official Fermi GBM burst catalog table."""
-    try:
-        if download:
-            logging.info("Downloading Burst Catalog from HEASARC...")
-            from gbm.finder import BurstCatalog  # lazy: gbm.finder logs into HEASARC FTP at import
-            burstcat = BurstCatalog()
-            df_grb = pd.DataFrame(burstcat.get_table())
-            df_grb.to_csv(PATH_GRB_TABLE, index=False)
-            logging.info(f"Saved raw burst catalog to: {PATH_GRB_TABLE}")
-        else:
-            df_grb = pd.read_csv(PATH_GRB_TABLE)
-        return df_grb
-    except Exception as e:
-        logging.error(f"Failed to fetch/read raw GRB catalog: {e}")
-        return pd.DataFrame()
 
 
 def df_burst_catalog(db_path: Path = GBM_BURST_DB) -> pd.DataFrame:

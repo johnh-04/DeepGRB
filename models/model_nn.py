@@ -36,7 +36,7 @@ from tensorflow.keras.layers import BatchNormalization, Dense, Dropout
 from tensorflow.keras.models import load_model
 
 import connections.utils.config as cfg
-from models.utils.losses import loss_max, loss_median
+from models.losses import loss_max, loss_median
 from utils.keys import get_keys
 from utils.period import window_days
 
