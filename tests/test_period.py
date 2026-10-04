@@ -4,14 +4,43 @@ import unittest
 
 import pandas as pd
 
+import ast
+from pathlib import Path
+
 import connections.utils.config as cfg
 from utils.period import days_with_data, in_window, months_to_window, window_days
+from utils.run_options import RunOptionsError, settings_to_env
+
+REPO = Path(__file__).resolve().parents[1]
 
 
-class TestConfigWindow(unittest.TestCase):
-    def test_config_defines_inclusive_crupi_window(self):
-        self.assertEqual(cfg.START_DATE, "2019-03-01")
-        self.assertEqual(cfg.END_DATE, "2019-06-30")
+def user_settings() -> dict:
+    """Literal assignments at the top of pipeline/pipeline_bkg.py (the USER SETTINGS block)."""
+    tree = ast.parse((REPO / "pipeline" / "pipeline_bkg.py").read_text())
+    return {n.targets[0].id: ast.literal_eval(n.value) for n in tree.body
+            if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name) and n.targets[0].id.isupper()
+            and isinstance(n.value, ast.Constant)}
+
+
+class TestPeriodSettings(unittest.TestCase):
+    def test_user_settings_define_inclusive_baseline_window(self):
+        s = user_settings()
+        self.assertEqual((s["START_DATE"], s["END_DATE"]), ("2019-03-01", "2019-06-30"))
+
+    def test_config_has_no_period(self):
+        # the period lives only in USER SETTINGS / DEEPGRB_*; tools read it from the run manifest
+        self.assertFalse(hasattr(cfg, "START_DATE") or hasattr(cfg, "END_DATE"))
+
+    def test_environment_has_priority(self):
+        s = {"START_DATE": "2019-03-01", "END_DATE": "2019-06-30", "RUN_LABEL": None, "FORCE_TRAIN": False, "JOBS": 4}
+        env = settings_to_env(s, {"DEEPGRB_END_DATE": "2019-03-03", "DEEPGRB_RUN_LABEL": ""})
+        self.assertEqual((env["DEEPGRB_START_DATE"], env["DEEPGRB_END_DATE"]), ("2019-03-01", "2019-03-03"))
+        self.assertEqual((env["DEEPGRB_RUN_LABEL"], env["DEEPGRB_FORCE_TRAIN"], env["DEEPGRB_JOBS"]), ("", "", "4"))
+        self.assertEqual(settings_to_env({**s, "FORCE_TRAIN": True}, {})["DEEPGRB_FORCE_TRAIN"], "1")
+
+    def test_missing_period_is_an_error(self):
+        with self.assertRaises(RunOptionsError):
+            settings_to_env({"START_DATE": None, "END_DATE": "2019-06-30"}, {})
 
 
 class TestWindowDays(unittest.TestCase):
