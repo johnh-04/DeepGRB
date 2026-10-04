@@ -103,6 +103,19 @@ class TestEventSignificance(unittest.TestCase):
         bkg = pd.DataFrame({"a": [100.0, 100.0]})
         self.assertEqual(event_significance(frg, bkg, ["a"]), (0.0, 0.0))
 
+    def test_zero_background_bins_are_ignored(self):
+        # B = 0 in one bin (network output at zero): that bin must not enter S
+        frg = pd.DataFrame({"a": [500.0, 130.0], "b": [500.0, 100.0]})
+        bkg = pd.DataFrame({"a": [0.0, 100.0], "b": [100.0, 100.0]})
+        s, _ = event_significance(frg, bkg, ["a", "b"])
+        self.assertAlmostEqual(s, 30 / np.sqrt(200))
+
+    def test_negative_background_bins_are_ignored(self):
+        frg = pd.DataFrame({"a": [120.0, 130.0]})
+        bkg = pd.DataFrame({"a": [-5.0, 100.0]})
+        s, _ = event_significance(frg, bkg, ["a"])
+        self.assertAlmostEqual(s, 30 / np.sqrt(100))
+
     def test_missing_bins_are_ignored(self):
         frg = pd.DataFrame({"a": [np.nan, 130.0]})
         bkg = pd.DataFrame({"a": [100.0, 100.0]})

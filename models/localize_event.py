@@ -50,7 +50,9 @@ def localize_event(ev: pd.Series, frg: pd.DataFrame, bkg: pd.DataFrame, bkg_dir:
 
     win = (frg["met"] > ev["start_met"] - pre_delay) & (frg["met"] < ev["end_met"])
     cols = [f"{d}_{rng}" for d in NAI_DETS]
-    resid = frg.loc[win, cols].to_numpy(dtype=float) - bkg.loc[win, cols].to_numpy(dtype=float)
+    b_win = bkg.loc[win, cols].to_numpy(dtype=float)
+    b_win[b_win <= 0] = np.nan  # non-positive predicted background is invalid (as in FOCuS and analyze)
+    resid = frg.loc[win, cols].to_numpy(dtype=float) - b_win
     if not np.isfinite(resid).any():
         raise ValueError("no valid bins in the event window")
     i_peak = np.unravel_index(np.nanargmax(resid), resid.shape)[0]

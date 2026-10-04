@@ -15,7 +15,8 @@ Faithful to the upstream implementation used for Crupi et al. (2023):
 
 Additions with respect to upstream: consistency C = max(S_r0, S_r1, S_r2) and the
 confidence tier CE (R/S/P); bins with missing values are ignored in S instead of
-turning the whole range into S = 0.
+turning the whole range into S = 0. Bins with a non-positive predicted background
+are ignored too, as in FOCuS (engine v3).
 """
 
 import logging
@@ -122,8 +123,11 @@ def event_significance(
     S = sum(N - B) / sqrt(sum(B)) over `channels`, keeping only the bins whose summed
     residual is >= the q-quantile of the residuals; maximised over q.
     Returns (S, q). S is 0 when no cut gives a positive value.
+    A bin is used only if all its channels have a finite observed rate and a finite,
+    strictly positive predicted background (B <= 0 is invalid, as for FOCuS).
     """
-    valid = frg_win[channels].notna().all(axis=1) & bkg_win[channels].notna().all(axis=1)
+    valid = (frg_win[channels].notna().all(axis=1) & bkg_win[channels].notna().all(axis=1)
+             & (bkg_win[channels] > 0).all(axis=1))
     n = frg_win.loc[valid, channels].sum(axis=1).to_numpy(dtype=float)
     b = bkg_win.loc[valid, channels].sum(axis=1).to_numpy(dtype=float)
     if n.size == 0:
