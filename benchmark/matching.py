@@ -56,3 +56,25 @@ def match_one_to_one(
         j = ref_to_ev[i]
         dist[i] = 0.0 if s[j] <= t[i] <= e[j] else min(abs(t[i] - s[j]), abs(t[i] - e[j]))
     return pd.DataFrame({"ref": np.arange(len(t)), "event": ref_to_ev, "matched": matched, "dt_start": dt, "distance": dist})
+
+
+def overlap_one_to_one(a_start: Sequence[float], a_dur: Sequence[float], b_start: Sequence[float],
+                       b_dur: Sequence[float], margin: float = PRIMARY_MARGIN) -> list:
+    """
+    One-to-one pairs (i, j, |start_i - start_j|) of overlapping intervals [start, start + duration]
+    extended by +/- margin, assigned greedily by increasing |start difference|.
+    """
+    a0, b0 = np.asarray(a_start, dtype=float), np.asarray(b_start, dtype=float)
+    a1, b1 = a0 + np.asarray(a_dur, dtype=float), b0 + np.asarray(b_dur, dtype=float)
+    cand = []
+    for i in range(len(a0)):
+        js = np.where((b0 - margin <= a1[i] + margin) & (a0[i] - margin <= b1 + margin))[0]
+        cand += [(abs(a0[i] - b0[j]), i, int(j)) for j in js]
+    cand.sort()
+    used_a, used_b, pairs = set(), set(), []
+    for d, i, j in cand:
+        if i not in used_a and j not in used_b:
+            used_a.add(i)
+            used_b.add(j)
+            pairs.append((i, j, d))
+    return pairs
