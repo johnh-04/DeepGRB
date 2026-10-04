@@ -1,0 +1,141 @@
+{
+  "orbital_period_s": 5709.999989569187,
+  "n_saa_passages": 1090,
+  "bands": {
+    "A": [
+      5050.0,
+      5300.0
+    ],
+    "B": [
+      5750.0,
+      5900.0
+    ]
+  },
+  "dipole_pole": [
+    80.65,
+    -72.68
+  ],
+  "runs": {
+    "cmp": {
+      "events": 144,
+      "without_counterpart": 53,
+      "groups": {
+        "matched": 91,
+        "A": 25,
+        "other": 17,
+        "B": 11
+      },
+      "dist_check_max_abs_diff_s": 1.8189894035458565e-12,
+      "band_A_count": 25,
+      "band_A_binom_p": 1.0853829300246856e-40,
+      "band_A_matched_count": 2,
+      "matched_n": 91,
+      "band_B_count": 11,
+      "band_B_binom_p": 1.974061591566781e-15,
+      "band_B_matched_count": 0,
+      "short_passages_preceded_by_event_without_counterpart": 24,
+      "A_before_short_passage": 24,
+      "zero_bkg_cells": 0,
+      "zero_bkg_rows": 0,
+      "events_zero_bkg_inside_S_window": [],
+      "events_zero_bkg_adjacent_1bin": [],
+      "L_ge_1.4_by_group": {
+        "matched": [
+          20,
+          91
+        ],
+        "A": [
+          0,
+          25
+        ],
+        "B": [
+          0,
+          11
+        ],
+        "other": [
+          12,
+          17
+        ]
+      }
+    },
+    "ref": {
+      "events": 136,
+      "without_counterpart": 46,
+      "groups": {
+        "matched": 90,
+        "other": 19,
+        "A": 17,
+        "B": 10
+      },
+      "dist_check_max_abs_diff_s": 1.8189894035458565e-12,
+      "band_A_count": 17,
+      "band_A_binom_p": 7.441906445584108e-26,
+      "band_A_matched_count": 2,
+      "matched_n": 90,
+      "band_B_count": 10,
+      "band_B_binom_p": 2.2612833378490605e-14,
+      "band_B_matched_count": 0,
+      "short_passages_preceded_by_event_without_counterpart": 17,
+      "A_before_short_passage": 17,
+      "zero_bkg_cells": 212,
+      "zero_bkg_rows": 6,
+      "events_zero_bkg_inside_S_window": [
+        6
+      ],
+      "events_zero_bkg_adjacent_1bin": [
+        9
+      ],
+      "L_ge_1.4_by_group": {
+        "matched": [
+          20,
+          90
+        ],
+        "A": [
+          0,
+          17
+        ],
+        "B": [
+          0,
+          10
+        ],
+        "other": [
+          15,
+          19
+        ]
+      }
+    }
+  },
+  "null_fraction_in_band_A": 0.0064,
+  "null_fraction_in_band_B": 0.0048,
+  "overlap": {
+    "pairs": 126,
+    "only_cmp": 18,
+    "only_ref": 10,
+    "only_ref_by_group": {
+      "matched": 0,
+      "A": 0,
+      "B": 3,
+      "other": 7
+    },
+    "median_abs_dstart_s": 0.0
+  },
+  "short_passages": 46,
+  "short_passage_duration_s": [
+    18.0,
+    328.0000014901161,
+    495.00000298023224
+  ],
+  "null_within_region_%": 0.7799999999999999,
+  "saa_region": {
+    "lat_min": -25.67502212524414,
+    "lat_max": 1.9035975933074951,
+    "lon_min": -94.53076171875,
+    "lon_max": 24.10282325744629,
+    "lon_range_at_lat_-12": [
+      -93.15048217773438,
+      -2.94769287109375
+    ]
+  },
+  "high_L_threshold": 1.4,
+  "null_L_ge_1.4_%": 16.84
+}

@@ -39,10 +39,9 @@ data/nn_model/bundles/*/*
 !data/nn_model/bundles/*/metadata.json
 
 # runs: the large matrices of steps 3-4 are not versioned (manifest, RESULTS.md, results/,
-# validation/ and analysis/ tables are)
+# validation/ and analysis/ are)
 data/runs/*/*/pred
 data/runs/*/*/trig
-data/runs/*/*/analysis/*.png
 
 # archives: only README and checksums are versioned
 data/_archive_*/*

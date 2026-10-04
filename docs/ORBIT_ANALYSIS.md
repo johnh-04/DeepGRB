@@ -1,10 +1,8 @@
 # Analisi orbitale degli eventi della baseline 2019
 
-Generato da `python -m benchmark.analysis.orbit_analysis` e `python -m benchmark.analysis.orbit_report` (commit `082aeb2`). Sola lettura sugli output del motore: nessuna run, bundle o parametro modificato. Tutti i numeri vengono dai file in `benchmark/analysis/out/`.
+Generato da `python -m benchmark.analysis.orbit_analysis` e `python -m benchmark.analysis.orbit_report` (commit `53e7df1`). Sola lettura sugli output del motore: nessuna run, bundle o parametro modificato. Tutti i numeri vengono dai file in `data/runs/2019-03-01_2019-06-30/engine-v2-seed1/analysis/`.
 
-Run analizzate: `engine-v2` (rete legacy del 2026-09-21) e `engine-v2-seed1` (rete riaddestrata, seed 1). Eventi: v2 144 (53 senza controparte), seed1 136 (46 senza controparte). "Senza controparte" = né catalogo trigger GBM né tabelle di Crupi (regola primaria di `benchmark/validate.py`).
-
-> Nota di integrità: `engine-v2/manifest.json` contiene una voce aggiunta il 2026-10-04T07:41:20 UTC (commit c244881) e il blocco parametri riporta `train_seed: 1` con `model_mode: load_bundle`: una pipeline lanciata **senza** `DEEPGRB_RUN_LABEL` ha usato la cartella di default. pred/trig/results di engine-v2 non sono stati riscritti (date dei file del 2026-10-03); il seed nel manifest non descrive il modello legacy. Non corretto qui (vincolo: engine-v2 in sola lettura).
+Run analizzate: `engine-v2` (rete `model_03-2019_07-2019_4.4_2026-09-21`) e `engine-v2-seed1` (rete `model_2019-03-01_2019-06-30_seed1`). Eventi: engine-v2 144 (53 senza controparte), engine-v2-seed1 136 (46 senza controparte). "Senza controparte" = né catalogo trigger GBM né tabelle di Crupi (regola primaria di `benchmark/validate.py`).
 
 ## 1. Definizione di `dist_saa_gap_s`
 
@@ -17,28 +15,28 @@ Calcolata in `benchmark/validate.py` (non modificata):
 
 Ricalcolata qui con la stessa definizione: differenza massima con il CSV della validazione 1.8e-12 s. Le distanze firmate dal buco precedente e successivo sono nelle colonne `t_since_gap_end_s` e `t_to_gap_start_s`.
 
-Gruppi degli eventi senza controparte (bande che contengono i due addensamenti di seed1 con margine): **A** = 5050–5300 s, **B** = 5750–5900 s, **altri** = il resto.
+Gruppi degli eventi senza controparte (bande che contengono i due addensamenti di engine-v2-seed1 con margine): **A** = 5050–5300 s, **B** = 5750–5900 s, **altri** = il resto.
 
 ## 2. Sovrapposizione tra le due reti
 
-Abbinamento uno-a-uno di intervalli [inizio, inizio + durata] estesi di ±2 bin (greedy per |Δinizio|): **126** coppie, **18** eventi solo in v2, **10** solo in seed1 (Δinizio mediano delle coppie 0.0 s).
+Abbinamento uno-a-uno di intervalli [inizio, inizio + durata] estesi di ±2 bin (greedy per |Δinizio|): **126** coppie, **18** eventi solo in engine-v2, **10** solo in engine-v2-seed1 (Δinizio mediano delle coppie 0.0 s).
 
-Righe: gruppo dell'evento in v2; colonne: gruppo dell'evento abbinato in seed1 (`absent` = nessun abbinamento).
+Righe: gruppo dell'evento in engine-v2; colonne: gruppo dell'evento abbinato in engine-v2-seed1 (`absent` = nessun abbinamento).
 
-| v2 \ seed1 | matched | A | B | other | absent |
+| engine-v2 \ engine-v2-seed1 | matched | A | B | other | absent |
 |---|---|---|---|---|---|
 | matched | 90 | 0 | 0 | 0 | 1 |
 | A | 0 | 17 | 0 | 0 | 8 |
 | B | 0 | 0 | 7 | 0 | 4 |
 | other | 0 | 0 | 0 | 12 | 5 |
 
-Eventi solo in seed1 per gruppo: matched 0, A 0, B 3, other 7.
+Eventi solo in engine-v2-seed1 per gruppo: matched 0, A 0, B 3, other 7.
 
-Risposta: gli eventi senza controparte **sono in gran parte gli stessi** nelle due reti. Tutti i 17 A di seed1 hanno un A in v2; B: 7/10; altri: 12/19. Nessun evento cambia categoria tra abbinato e senza controparte. La rete legacy ne produce di più in A (25 contro 17).
+Risposta: gli eventi senza controparte **sono in gran parte gli stessi** nelle due reti. Tutti i 17 A di engine-v2-seed1 hanno un A in engine-v2; B: 7/10; altri: 12/19. Nessun evento cambia categoria tra abbinato e senza controparte. La rete legacy ne produce di più in A (25 contro 17).
 
 ## 3. Posizione orbitale
 
-Metodo (per **tutti** gli eventi di entrambe le run e per 5000 istanti casuali presi tra i bin validi di v2, ipotesi nulla):
+Metodo (per **tutti** gli eventi di entrambe le run e per 5000 istanti casuali presi tra i bin validi di engine-v2, ipotesi nulla):
 
 - latitudine, longitudine: POSHIST (1 Hz, campione più vicino); altitudine e **L di McIlwain**: `gbm.data.PosHist` (gbm-data-tools);
 - latitudine geomagnetica: **dipolo centrato semplice** (polo IGRF-13 2020: 80.65°N, -72.68°E), approssimazione;
@@ -47,11 +45,11 @@ Metodo (per **tutti** gli eventi di entrambe le run e per 5000 istanti casuali p
 - distanze firmate: tempo dall'ultima **uscita** e alla prossima **entrata** nella SAA; posizione di t − P rispetto al passaggio SAA dell'orbita precedente (0 = dentro la SAA; negativo = prima dell'entrata; positivo = dopo l'uscita); tempo dalla fine del buco dati precedente e all'inizio del successivo;
 - distanza geografica dalla regione SAA: grande cerchio fino al più vicino campione POSHIST con flag SAA.
 
-![mappa](../benchmark/analysis/out/map_lat_lon.png)
+![mappa](../data/runs/2019-03-01_2019-06-30/engine-v2-seed1/analysis/map_lat_lon.png)
 
-![tempo dall'uscita SAA](../benchmark/analysis/out/hist_time_since_saa_exit.png)
+![tempo dall'uscita SAA](../data/runs/2019-03-01_2019-06-30/engine-v2-seed1/analysis/hist_time_since_saa_exit.png)
 
-### Mediane per gruppo (seed1)
+### Mediane per gruppo (engine-v2-seed1)
 
 | gruppo | lat | lon | L | geomag_lat_dipole | phase_deg | t_since_saa_exit_s | t_to_saa_entry_s | prev_orbit_saa_offset_s | dist_saa_region_deg | alt_km |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -65,19 +63,19 @@ Metodo (per **tutti** gli eventi di entrambe le run e per 5000 istanti casuali p
 
 | run | group | n | t−P dentro SAA | t−P entro 300 s da SAA | entrata SAA entro 1 orbita |
 |---|---|---|---|---|---|
-| v2 | matched | 91 | 2 | 4 | 52 |
-| v2 | A | 25 | 25 | 25 | 24 |
-| v2 | B | 11 | 0 | 0 | 2 |
-| v2 | other | 17 | 0 | 0 | 6 |
-| seed1 | matched | 90 | 2 | 4 | 51 |
-| seed1 | A | 17 | 17 | 17 | 17 |
-| seed1 | B | 10 | 0 | 0 | 1 |
-| seed1 | other | 19 | 0 | 0 | 8 |
+| cmp | matched | 91 | 2 | 4 | 52 |
+| cmp | A | 25 | 25 | 25 | 24 |
+| cmp | B | 11 | 0 | 0 | 2 |
+| cmp | other | 17 | 0 | 0 | 6 |
+| ref | matched | 90 | 2 | 4 | 51 |
+| ref | A | 17 | 17 | 17 | 17 |
+| ref | B | 10 | 0 | 0 | 1 |
+| ref | other | 19 | 0 | 0 | 8 |
 | null | null | 5000 | 56 | 145 | 2485 |
 
-### Test KS a due campioni (seed1; p-value contro abbinati e contro tempi casuali)
+### Test KS a due campioni (engine-v2-seed1; p-value contro abbinati e contro tempi casuali)
 
-Tutti i test (entrambe le run, tutte le variabili) sono in `benchmark/analysis/out/ks_tests.csv`. Campioni piccoli (A 17, B 10): i p-value indicano differenze di distribuzione, non la causa.
+Tutti i test (entrambe le run, tutte le variabili) sono in `data/runs/2019-03-01_2019-06-30/engine-v2-seed1/analysis/ks_tests.csv`. Campioni piccoli (A 17, B 10): i p-value indicano differenze di distribuzione, non la causa.
 
 | group | variable | matched |
 |---|---|---|
@@ -109,24 +107,24 @@ Residuo relativo della somma dei 12 NaI in r1, (frg − bkg)/bkg, e frazione di 
 
 | run | zone | valid_bins | median_rel_residual_% | p90_rel_residual_% | frac_bins_focus_r1_gt3_% |
 |---|---|---|---|---|---|
-| v2 | 200 s before short passage | 2186 | 0.89 | 5.61 | 8.51 |
-| v2 | 200 s after short passage | 2198 | -0.13 | 0.93 | 0.32 |
-| v2 | within 3.5 deg of SAA region | 13136 | 0.45 | 2.51 | 2.08 |
-| v2 | elsewhere | 1910078 | 0.13 | 1.00 | 0.16 |
-| seed1 | 200 s before short passage | 2186 | 0.54 | 4.49 | 5.40 |
-| seed1 | 200 s after short passage | 2198 | -0.14 | 0.83 | 0.27 |
-| seed1 | within 3.5 deg of SAA region | 13136 | 0.22 | 2.04 | 1.63 |
-| seed1 | elsewhere | 1910078 | 0.04 | 0.89 | 0.16 |
+| cmp | 200 s before short passage | 2186 | 0.89 | 5.61 | 8.51 |
+| cmp | 200 s after short passage | 2198 | -0.13 | 0.93 | 0.32 |
+| cmp | within 3.5 deg of SAA region | 13136 | 0.45 | 2.51 | 2.08 |
+| cmp | elsewhere | 1910078 | 0.13 | 1.00 | 0.16 |
+| ref | 200 s before short passage | 2186 | 0.54 | 4.49 | 5.40 |
+| ref | 200 s after short passage | 2198 | -0.14 | 0.83 | 0.27 |
+| ref | within 3.5 deg of SAA region | 13136 | 0.22 | 2.04 | 1.63 |
+| ref | elsewhere | 1910078 | 0.04 | 0.89 | 0.16 |
 
 ## 4. Verdetto
 
 ### Gruppo A — ipotesi "periferia SAA": **sostenuta**, con un meccanismo preciso
 
-- Posizione: tutti i 17 eventi A di seed1 sono a lat -14.0–-10.9°, lon -96.1–-92.6°, sul **bordo occidentale** della regione SAA (a lat −12° la regione con flag va da lon -93.2° a -2.9°), fase 326–334°, a 0.6–2.4° dalla regione SAA (abbinati: mediana 65°; tempi casuali entro 3.5°: 0.78%).
+- Posizione: tutti i 17 eventi A di engine-v2-seed1 sono a lat -14.0–-10.9°, lon -96.1–-92.6°, sul **bordo occidentale** della regione SAA (a lat −12° la regione con flag va da lon -93.2° a -2.9°), fase 326–334°, a 0.6–2.4° dalla regione SAA (abbinati: mediana 65°; tempi casuali entro 3.5°: 0.78%).
 - Tempo: iniziano 22–133 s **prima di entrare** nella SAA; 17/17 precedono di al più 200 s un **passaggio breve** (< 500 s) il cui buco dati non è mascherato. Un'orbita prima Fermi era dentro la SAA in 17/17 casi (tempi casuali: 56/5000).
 - Il raggruppamento di `dist_saa_gap_s` a ≈ 5100–5200 s viene dalla definizione: il passaggio breve subito dopo l'evento non produce un buco > 500 s, quindi il bordo più vicino è la fine del buco lungo dell'**orbita precedente**. Per gli A, t − P cade 492–619 s prima di quella fine (P = 5710 s), cioè dentro il passaggio SAA precedente.
 - Fondo: nei 200 s prima dei passaggi brevi il residuo relativo al 90° percentile è 4.5% (altrove 0.9%) e FOCuS supera 3σ nel 5.4% dei bin (altrove 0.16%); dopo l'uscita nessun eccesso (0.27%). La rete sottostima il fondo nell'avvicinamento ai passaggi brevi.
-- Riproducibilità: stesso comportamento con la rete legacy (v2: 24 eventi A prima di un passaggio breve; 8.5% dei bin sopra 3σ in quella zona).
+- Riproducibilità: stesso comportamento con la rete legacy (engine-v2: 24 eventi A prima di un passaggio breve; 8.5% dei bin sopra 3σ in quella zona).
 - Probabilità che 17 dei 46 eventi senza controparte cadano nella banda A per caso (frazione dei tempi casuali nella banda: 0.64%): binomiale p = 7.4e-26.
 
 ### Gruppo B — ipotesi "periferia SAA nell'orbita successiva a un passaggio": **non sostenuta nella forma proposta**; periferia SAA **sostenuta**, ma nell'orbita *precedente* al primo passaggio
@@ -143,9 +141,9 @@ Eventi abbinati a Crupi/GBM nelle stesse bande: A 2, B 0 su 90.
 Un flag sull'**evento** (non un taglio sui trigger, nessuna modifica al motore), calcolato dopo `events_table.csv` dalla POSHIST:
 - `saa_edge_short_passage`: l'inizio dell'evento è entro 200 s prima (o dopo) un passaggio SAA più breve di 500 s (buco non mascherato);
 - `saa_region_proximity`: la posizione di Fermi all'inizio dell'evento è entro 3.5° dalla regione con flag SAA.
-Gli eventi flaggati restano nel catalogo, con la segnalazione "possibile fondo di particelle al bordo SAA". Sui dati di seed1 il primo flag coprirebbe 17 eventi A; il secondo i B (distanza ≤ 3.1°). Soglie e conteggi andrebbero verificati anche sugli eventi abbinati prima di usarli.
+Gli eventi flaggati restano nel catalogo, con la segnalazione "possibile fondo di particelle al bordo SAA". Sui dati di engine-v2-seed1 il primo flag coprirebbe 17 eventi A; il secondo i B (distanza ≤ 3.1°). Soglie e conteggi andrebbero verificati anche sugli eventi abbinati prima di usarli.
 
-## 5. Gli eventi "altri" senza controparte (seed1)
+## 5. Gli eventi "altri" senza controparte (engine-v2-seed1)
 
 19 eventi; voci del catalogo trigger GBM entro ±1 h dall'inizio (con Δt firmato).
 
@@ -171,14 +169,14 @@ Gli eventi flaggati restano nel catalogo, con la segnalazione "possibile fondo d
 | 101 | 2019-05-29 10:42:51 | 274.4 | n0 n1 n3 n4 n5 n6 n7 n9 na nb | 85.0 | R | 25.1 | -126.0 | 1.4 | 80.0 | 35465.6 | 1555.4 | 1552.4 | other | - |
 | 116 | 2019-06-09 02:40:06 | 4.1 | n6 n7 n8 n9 nb | 41.2 | R | -25.5 | 96.3 | 1.6 | 264.2 | 26964.3 | 10094.7 | 10092.8 | other | - |
 
-`pair_group` = gruppo dell'evento abbinato in v2 (`absent` = presente solo in seed1). Mediane rispetto agli abbinati: L 1.58 contro 1.18, distanza dalla regione SAA 45° contro 65°.
+`pair_group` = gruppo dell'evento abbinato in engine-v2 (`absent` = presente solo in engine-v2-seed1). Mediane rispetto agli abbinati: L 1.58 contro 1.18, distanza dalla regione SAA 45° contro 65°.
 
 Osservazioni (descrittive, nessun verdetto):
 
 - **Alta L.** 15/19 "altri" hanno L ≥ 1.4 (abbinati: 20/90; tempi casuali: 16.8%). Si concentrano vicino ai punti di massima latitudine dell'orbita (|lat| ≥ 24°: 14/19), cioè alle latitudini geomagnetiche più alte raggiunte da Fermi: zona compatibile con precipitazione di particelle, ma qui non verificata.
-- **Fondo previsto nullo.** Nella run seed1 la rete prevede fondo 0 in 212 celle (6 bin, due tratti di 3 bin consecutivi); nella v2 in 0. Bin a zero **dentro** la finestra di S: eventi [6]; finestra di S che inizia o finisce **a un bin** da quei bin: eventi [9]. In engine v2 `models/analyze.py::event_significance` non scartava B ≤ 0 (FOCuS sì) e l'evento con i bin a zero nella finestra aveva una significatività esplosa; la correzione è nel motore v3 (vedi `docs/WORKLOG.md`). Gli eventi adiacenti ai bin a zero non cambiano S, ma il loro trigger parte subito dopo il reset di FOCuS su quei bin ed esistono solo nella rete seed1: probabili artefatti della rete, non verificati.
+- **Fondo previsto nullo.** Nella run engine-v2-seed1 la rete prevede fondo 0 in 212 celle (6 bin, due tratti di 3 bin consecutivi); nella engine-v2 in 0. Bin a zero **dentro** la finestra di S: eventi [6]; finestra di S che inizia o finisce **a un bin** da quei bin: eventi [9]. In engine engine-v2 `models/analyze.py::event_significance` non scartava B ≤ 0 (FOCuS sì) e l'evento con i bin a zero nella finestra aveva una significatività esplosa; la correzione è nel motore v3 (vedi `docs/WORKLOG.md`). Gli eventi adiacenti ai bin a zero non cambiano S, ma il loro trigger parte subito dopo il reset di FOCuS su quei bin ed esistono solo nella rete engine-v2-seed1: probabili artefatti della rete, non verificati.
 
-## 5b. Bin con fondo previsto nullo nella rete seed1
+## 5b. Bin con fondo previsto nullo nella rete engine-v2-seed1
 
 Generato da `python -m benchmark.analysis.zero_prediction` (sola lettura: dataset ricostruito con `ModelNN.prepare`, allineato riga per riga a `pred/`; bundle `model_2019-03-01_2019-06-30_seed1`).
 
@@ -186,10 +184,10 @@ Generato da `python -m benchmark.analysis.zero_prediction` (sola lettura: datase
 - **Ingressi**: nessun NaN (0 su 6 × 60), bin regolari (Δt dal precedente 4.096–4.096 s), nessun salto: la variazione massima rispetto al bin precedente è 1.36 volte il 99.9° percentile dei salti tipici (vicini: 1.30).
 - **Cosa hanno di anomalo**: la velocità angolare. `w1`, `w2`, `w3` sono **insieme** nella coda della distribuzione del periodo (percentili 99.51–99.994; |z| fino a 5.20 rispetto allo scaler di training). Non sono fuori scala: |z| massimo nei bin a zero 5.20, nei bin vicini 5.05.
 - **Perché la rete dà 0**: la pre-attivazione dello strato di uscita (ReLU) è negativa su tutti i canali nei bin a zero pieno (massimo -350; nei vicini il massimo è almeno 324), e l'attivazione media del penultimo strato è 9.1–18.8 contro 0.89–1.63 nei vicini: la rappresentazione interna esplode e la ReLU finale taglia a zero. Non è un clipping esplicito né un ingresso NaN o fuori scala.
-- **Sensibilità**: sostituendo un solo ingresso con la media dei vicini, nei bin a zero pieno l'uscita torna positiva solo con `w1` o `w2` (tabella sotto); con tutti gli ingressi dei vicini l'uscita è positiva in ogni caso (sì). La rete seed1 ha una risposta molto ripida in questa regione rara dello spazio degli ingressi; la rete legacy sugli stessi bin prevede 4553–4569 (somma dei 12 NaI in r1), valori normali.
-- **Bin adiacenti**: 2 bin vicini hanno una predizione seed1 inferiore all'80% di quella legacy (2019-03-07 01:51:23, 2019-03-09 04:40:38): sono i bin da cui partono gli eventi seed1 6 e 9. Anche l'evento 9 è quindi un artefatto di questa instabilità, pur non contenendo bin a zero.
+- **Sensibilità**: sostituendo un solo ingresso con la media dei vicini, nei bin a zero pieno l'uscita torna positiva solo con `w1` o `w2` (tabella sotto); con tutti gli ingressi dei vicini l'uscita è positiva in ogni caso (sì). La rete engine-v2-seed1 ha una risposta molto ripida in questa regione rara dello spazio degli ingressi; la rete di engine-v2 sugli stessi bin prevede 4553–4569 (somma dei 12 NaI in r1), valori normali.
+- **Bin adiacenti**: 2 bin vicini hanno una predizione engine-v2-seed1 inferiore all'80% di quella di engine-v2 (2019-03-07 01:51:23, 2019-03-09 04:40:38). Eventi di engine-v2-seed1 con il flag `near_zero_prediction`: 6, 9; sono probabili artefatti di questa instabilità.
 
-| timestamp | dt_prev_s | n_nan_inputs | max_abs_z | feature_max_abs_z | max_jump_over_p999 | seed1_channels_le0 | preact_max | penultimate_mean_abs | legacy_pred_sum_r1 | inputs_that_restore |
+| timestamp | dt_prev_s | n_nan_inputs | max_abs_z | feature_max_abs_z | max_jump_over_p999 | ref_channels_le0 | preact_max | penultimate_mean_abs | cmp_pred_sum_r1 | inputs_that_restore |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 2019-03-07 01:51:27 | 4.10 | 0 | 5.20 | w2 | 1.34 | 36 | -443.43 | 10.32 | 4552.85 | w1, w2 |
 | 2019-03-07 01:51:31 | 4.10 | 0 | 5.13 | w2 | 1.36 | 36 | -578.80 | 12.66 | 4553.60 | w1, w2 |
@@ -198,11 +196,11 @@ Generato da `python -m benchmark.analysis.zero_prediction` (sola lettura: datase
 | 2019-03-09 04:40:30 | 4.10 | 0 | 4.83 | w3 | 1.36 | 36 | -876.23 | 18.82 | 4567.50 | w1, w2 |
 | 2019-03-09 04:40:34 | 4.10 | 0 | 4.88 | w3 | 1.36 | 36 | -451.77 | 11.17 | 4565.75 | w1, w2 |
 
-Flag di post-processing `near_zero_prediction` (evento esteso di 5 bin che tocca un bin con fondo previsto ≤ 0): `models/saa_flags.py`, riportato da `benchmark/validate.py`.
+Flag di post-processing `near_zero_prediction` (evento esteso di 5 bin che tocca un bin con fondo previsto ≤ 0): `models/flags.py` (step 7 della pipeline), riportato nel `RESULTS.md` della run.
 
 ## 6. Limiti
 
-- Le bande A/B sono state scelte guardando i dati di seed1: i p-value binomiali misurano quanto il raggruppamento è anomalo, non sono un test cieco.
+- Le bande A/B sono state scelte guardando i dati di engine-v2-seed1: i p-value binomiali misurano quanto il raggruppamento è anomalo, non sono un test cieco.
 - Latitudine geomagnetica da dipolo centrato (approssimazione); L di McIlwain dalle tabelle di gbm-data-tools.
 - Il confronto dei residui usa la somma dei 12 NaI in r1; non distingue i singoli rivelatori.
 - La regione SAA è quella del flag di POSHIST, che è la regione in cui i rivelatori sono spenti; la regione fisica di particelle intrappolate è più ampia.
