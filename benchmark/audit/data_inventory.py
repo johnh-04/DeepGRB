@@ -1,19 +1,19 @@
 """
-Read-only data coverage inventory for the Crupi 2019 window.
+Read-only data coverage inventory of the period of a run.
 
 For every calendar day in [START, END] (inclusive) reports which raw and
 preprocessed inputs exist on disk:
   - CSPEC files: NaI (n0..nb, expected 12) and BGO (b0, b1, expected 2)
   - POSHIST file (expected 1)
   - preprocessed daily table data/bkg/YYMMDD.csv
-and whether the day is covered by the prediction matrices (pred/frg_*.csv).
+and whether the day is covered by the run's predictions (<run>/pred/frg.csv).
 
 Writes docs/DATA_INVENTORY.md and docs/data_inventory.csv. Never modifies data.
 
 Usage (from repo root):
-    python -m benchmark.audit.data_inventory [--start YYYY-MM-DD] [--end YYYY-MM-DD]
+    python -m benchmark.audit.data_inventory --run data/runs/<start>_<end>/engine-v<N>[-<label>]
 
-Defaults: START_DATE / END_DATE from connections/utils/config.py.
+The period is read from the run manifest.
 """
 
 import argparse
@@ -23,11 +23,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from connections.utils.config import END_DATE, START_DATE
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = REPO_ROOT / "data"
-DOCS_DIR = REPO_ROOT / "docs"
+from connections.utils.config import DATA_DIR, DOCS_DIR, FOLD_BKG, FOLD_CSPEC_POS, FOLD_POSHIST, run_period
+from utils.logs import detail, setup_logging
 
 NAI_DETS = [f"n{d}" for d in "0123456789ab"]
 BGO_DETS = ["b0", "b1"]
@@ -65,11 +62,11 @@ def pred_day_coverage(pred_file: Path) -> set:
     return set(pd.to_datetime(ts.str.slice(0, 10)).dt.strftime("%y%m%d").unique())
 
 
-def build_inventory(start: str, end: str) -> pd.DataFrame:
-    cspec = scan_cspec(DATA_DIR / "cspec")
-    poshist = scan_poshist(DATA_DIR / "poshist")
-    bkg_dir = DATA_DIR / "bkg"
-    pred_days = pred_day_coverage(DATA_DIR / "pred" / "frg_03-2019_07-2019.csv")
+def build_inventory(start: str, end: str, frg_path: Path) -> pd.DataFrame:
+    cspec = scan_cspec(DATA_DIR / FOLD_CSPEC_POS)
+    poshist = scan_poshist(DATA_DIR / FOLD_POSHIST)
+    bkg_dir = DATA_DIR / FOLD_BKG
+    pred_days = pred_day_coverage(frg_path)
 
     rows = []
     for day in pd.date_range(start, end, freq="D"):
@@ -93,7 +90,7 @@ def build_inventory(start: str, end: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def to_markdown(df: pd.DataFrame, start: str, end: str) -> str:
+def to_markdown(df: pd.DataFrame, start: str, end: str, run_name: str) -> str:
     n = len(df)
     lines = [
         "# Inventario copertura dati",
@@ -109,7 +106,7 @@ def to_markdown(df: pd.DataFrame, start: str, end: str) -> str:
         f"| CSPEC NaI completi (12/12) | {int((df.cspec_nai == 12).sum())} / {n} |",
         f"| POSHIST presente | {int((df.poshist >= 1).sum())} / {n} |",
         f"| Tabella preprocessata `data/bkg/YYMMDD.csv` | {int(df.bkg_csv.sum())} / {n} |",
-        f"| Presente in `pred/frg_03-2019_07-2019.csv` | {int(df.in_pred_frg.sum())} / {n} |",
+        f"| Presente in `pred/frg.csv` della run `{run_name}` | {int(df.in_pred_frg.sum())} / {n} |",
         "",
     ]
     missing_raw = df.loc[~df.raw_complete, "date"].tolist()
@@ -138,17 +135,18 @@ def to_markdown(df: pd.DataFrame, start: str, end: str) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--start", default=START_DATE)
-    parser.add_argument("--end", default=END_DATE)
+    parser.add_argument("--run", type=Path, required=True, help="run folder data/runs/<start>_<end>/engine-v<N>[-<label>]")
     args = parser.parse_args()
+    setup_logging()
+    start, end = run_period(args.run)
 
-    df = build_inventory(args.start, args.end)
+    df = build_inventory(start, end, args.run / "pred" / "frg.csv")
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
     df.to_csv(DOCS_DIR / "data_inventory.csv", index=False)
-    (DOCS_DIR / "DATA_INVENTORY.md").write_text(to_markdown(df, args.start, args.end), encoding="utf-8")
-    print(f"days={len(df)} raw_complete={int(df.raw_complete.sum())} "
-          f"bkg_csv={int(df.bkg_csv.sum())} in_pred={int(df.in_pred_frg.sum())}")
-    print("missing raw:", df.loc[~df.raw_complete, "date"].tolist())
+    (DOCS_DIR / "DATA_INVENTORY.md").write_text(to_markdown(df, start, end, args.run.name), encoding="utf-8")
+    detail(f"days {len(df)}: raw complete {int(df.raw_complete.sum())}, daily tables {int(df.bkg_csv.sum())}, "
+           f"in pred {int(df.in_pred_frg.sum())}; missing raw: {df.loc[~df.raw_complete, 'date'].tolist()}")
+    detail(f"written {DOCS_DIR / 'DATA_INVENTORY.md'} and {DOCS_DIR / 'data_inventory.csv'}")
 
 
 if __name__ == "__main__":

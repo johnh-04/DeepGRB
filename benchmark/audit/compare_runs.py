@@ -4,7 +4,7 @@ intervals extended by +/- 2 bins, then lists events present in only one run and 
 whose time, duration, detectors, significance or tier changed.
 
 Usage (repo root):
-    python -m benchmark.audit.compare_runs <run A> <run B> [--out file.md]
+    python -m benchmark.audit.compare_runs --run <run A> --run <run B> [--out file.md]
 """
 
 import argparse
@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from benchmark.matching import overlap_one_to_one
-from benchmark.validate import md_table
+from benchmark.report import md_table
 
 FIELDS = ["start_times", "duration", "detectors", "trig_dets", "sigma_r0", "sigma_r1", "sigma_r2", "sigma_C", "CE"]
 
@@ -60,11 +60,13 @@ def to_markdown(res: dict, name_a: str, name_b: str) -> str:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("run_a", type=Path)
-    p.add_argument("run_b", type=Path)
+    p.add_argument("--run", type=Path, action="append", required=True, help="run folder; give it twice (A then B)")
     p.add_argument("--out", type=Path)
     args = p.parse_args()
-    text = to_markdown(compare(args.run_a, args.run_b), args.run_a.name, args.run_b.name)
+    if len(args.run) != 2:
+        p.error("give exactly two --run folders")
+    run_a, run_b = args.run
+    text = to_markdown(compare(run_a, run_b), run_a.name, run_b.name)
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(text, encoding="utf-8")
