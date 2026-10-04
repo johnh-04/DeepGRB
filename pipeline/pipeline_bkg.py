@@ -48,12 +48,13 @@ from connections.utils.config import (
     FOLD_NN,
     FOLD_POSHIST,
     GBM_TRIG_DB,
+    PRED_TRIG_COMPATIBLE_SINCE,
     START_DATE,
     run_dir,
 )
 from models.analyze import BINLENGTH, MAX_DET_NUMBER, MERGE_SECONDS, MIN_DET_NUMBER, EventAnalyzer
 from models.download_bkg import download_days
-from models.model_nn import ModelNN
+from models.model_nn import ModelNN, count_nonpositive_predictions
 from models.preprocess import build_table
 from models.trigger import run_trigger
 from models.trigs.focus import build_focus_runner
@@ -76,7 +77,8 @@ ANALYZE_THRESHOLD = 3.0  # sigma, range r1
 # period reuses the paper-faithful model trained on 2026-09-21 by upstream-equivalent code;
 # labelled runs (utils/run_options.py) train or reuse their own bundle and never use it.
 try:
-    OPTS = resolve_run_options(os.environ, START_DATE, END_DATE, run_dir(), DATA_DIR / FOLD_NN)
+    _reuse = run_dir(engine_version=PRED_TRIG_COMPATIBLE_SINCE) if PRED_TRIG_COMPATIBLE_SINCE != ENGINE_VERSION else None
+    OPTS = resolve_run_options(os.environ, START_DATE, END_DATE, run_dir(), DATA_DIR / FOLD_NN, reuse_source_dir=_reuse)
 except RunOptionsError as e:
     if __name__ == "__main__":
         sys.exit(f"[run options] {e}")
@@ -103,7 +105,7 @@ def parameters() -> dict:
         "nn": NN_PARAMS,
         "train_seed": TRAIN_SEED,
         "run_label": OPTS.label,
-        "model_bundle": str(MODEL_BUNDLE.relative_to(REPO_ROOT)),
+        "model_bundle": str(MODEL_BUNDLE.relative_to(REPO_ROOT) if MODEL_BUNDLE.is_absolute() else MODEL_BUNDLE),
         "model_mode": OPTS.mode,
         "force_train": OPTS.force_train,
         "saa_gap_s": 500,
@@ -125,6 +127,22 @@ def git_state() -> tuple:
     except OSError:
         commit, dirty = "unknown", True
     return commit, dirty
+
+
+def update_manifest(key: str, value) -> None:
+    """Adds or replaces one top-level entry of run_dir/manifest.json."""
+    path = RUN / "manifest.json"
+    data = json.loads(path.read_text()) if path.exists() else {}
+    data[key] = value
+    path.write_text(json.dumps(data, indent=2))
+
+
+def record_predicted_zero(how: str) -> None:
+    """Counts predicted background <= 0 (invalid for FOCuS and S) and stores it in the manifest."""
+    counts = count_nonpositive_predictions(PRED_BKG)
+    counts["source"] = how
+    update_manifest("predicted_zero_cells", counts)
+    logging.info(f"Predicted background <= 0: {counts['cells']} cells, {counts['bins_all_channels']} whole bins ({how})")
 
 
 def report_devices() -> None:
@@ -192,6 +210,21 @@ def run_step_preprocess(df_days: pd.DataFrame) -> None:
 
 def run_step_neural_network() -> None:
     print(f"\n[STEP 3/5] Neural background -> {PRED_FRG.parent}")
+    if OPTS.mode == "reuse_pred":
+        src = OPTS.reuse_source
+        for sub in ("pred", "trig"):
+            if not (RUN / sub).exists():
+                (RUN / sub).symlink_to(src / sub, target_is_directory=True)
+        src_manifest = json.loads((src / "manifest.json").read_text()) if (src / "manifest.json").exists() else {}
+        update_manifest("reused_from", {
+            "run": str(src.relative_to(REPO_ROOT)), "engine_version": PRED_TRIG_COMPATIBLE_SINCE, "how": "symlink",
+            "steps": ["3 pred/", "4 trig/"],
+            "model_bundle": src_manifest.get("parameters", {}).get("model_bundle"),
+            "source_git_commit": (src_manifest.get("runs") or [{}])[0].get("git_commit"),
+        })
+        logging.info(f"Reusing pred/ and trig/ of {src} (symlinks); steps 3-4 are unchanged since engine v{PRED_TRIG_COMPATIBLE_SINCE}.")
+        record_predicted_zero(f"reused from {src.name}")
+        return
     if PRED_FRG.exists() and PRED_BKG.exists():
         logging.info("Background predictions already in this run folder. Skipping.")
         return
@@ -207,6 +240,7 @@ def run_step_neural_network() -> None:
         "trained_at": pd.Timestamp.now(tz="UTC").isoformat(),
     })
     nn.predict(PRED_FRG, PRED_BKG, time_to_del=TIME_TO_DEL_BINS)
+    record_predicted_zero("predicted in this run")
 
 
 def run_step_trigger() -> None:

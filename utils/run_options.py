@@ -14,7 +14,13 @@ Environment variables
 
 Without DEEPGRB_RUN_LABEL and DEEPGRB_FORCE_TRAIN the behaviour is the historical one:
 default run folder used as a cache, legacy model for 2019-03-01..2019-06-30.
+
+Reuse across engine versions: when the matching run of an older, compatible engine version
+(same period and label) has complete pred/ and trig/, the new run links them instead of
+predicting again (mode "reuse_pred"; never with DEEPGRB_FORCE_TRAIN).
 """
+
+import json
 
 import re
 from dataclasses import dataclass
@@ -39,10 +45,11 @@ class RunOptions:
     run_dir: Path
     bundle_dir: Path
     legacy_h5: Path
-    mode: str  # "load_bundle" | "wrap_legacy" | "train" | "unavailable"
+    mode: str  # "load_bundle" | "wrap_legacy" | "train" | "unavailable" | "reuse_pred"
     seed: int
     force_train: bool
     reuse_bundle: bool
+    reuse_source: Optional[Path] = None
 
     @property
     def is_labelled(self) -> bool:
@@ -53,9 +60,20 @@ def _flag(env: Mapping[str, str], name: str) -> bool:
     return env.get(name, "") == "1"
 
 
+PRED_TRIG_FILES = ("pred/frg.csv", "pred/bkg.csv", "trig/trig.csv", "trig/offset.csv")
+
+
+def has_pred_trig(run: Path) -> bool:
+    return all((run / f).exists() for f in PRED_TRIG_FILES)
+
+
 def resolve_run_options(env: Mapping[str, str], start_date: str, end_date: str,
-                        default_run_dir: Path, nn_dir: Path) -> RunOptions:
-    """Decides run folder, bundle and model mode; raises RunOptionsError before anything is written."""
+                        default_run_dir: Path, nn_dir: Path, reuse_source_dir: Optional[Path] = None) -> RunOptions:
+    """
+    Decides run folder, bundle and model mode; raises RunOptionsError before anything is written.
+    reuse_source_dir: default run folder of the older compatible engine version (its labelled
+    sibling is used for labelled runs).
+    """
     label = env.get("DEEPGRB_RUN_LABEL") or None
     force = _flag(env, "DEEPGRB_FORCE_TRAIN")
     reuse = _flag(env, "DEEPGRB_REUSE_BUNDLE")
@@ -76,6 +94,20 @@ def resolve_run_options(env: Mapping[str, str], start_date: str, end_date: str,
     legacy_h5 = nn_dir / LEGACY_H5_NAME
     bundles = nn_dir / "bundles"
     is_legacy_period = (start_date, end_date) == LEGACY_PERIOD
+
+    source = None
+    if reuse_source_dir is not None and not force:
+        cand = reuse_source_dir if label is None else reuse_source_dir.parent / f"{reuse_source_dir.name}-{label}"
+        source = cand if has_pred_trig(cand) else None
+
+    if source is not None:
+        run = default_run_dir if label is None else default_run_dir.parent / f"{default_run_dir.name}-{label}"
+        if label is not None and run.exists():
+            raise RunOptionsError(f"Run folder {run} already exists: move it to an archive or choose another label.")
+        bundle = Path(json.loads((source / "manifest.json").read_text())["parameters"]["model_bundle"]) \
+            if (source / "manifest.json").exists() else Path("unknown")
+        return RunOptions(start_date, end_date, label, run, bundle, nn_dir / LEGACY_H5_NAME, "reuse_pred", seed,
+                          force, reuse, source)
 
     if label is not None:
         run = default_run_dir.parent / f"{default_run_dir.name}-{label}"
@@ -115,6 +147,8 @@ def obtain_model(nn, opts: RunOptions, train_params: Mapping, extra_metadata: Op
         nn.bundle_from_legacy_h5(opts.legacy_h5, opts.bundle_dir)
     elif opts.mode == "train":
         nn.train(opts.bundle_dir, seed=opts.seed, extra_metadata=dict(extra_metadata or {}), **train_params)
+    elif opts.mode == "reuse_pred":
+        raise RunOptionsError(f"Run reuses predictions of {opts.reuse_source}: no model is needed.")
     elif opts.mode == "unavailable":
         raise RunOptionsError(f"No model bundle {opts.bundle_dir.name}: set DEEPGRB_ALLOW_TRAINING=1 to train one.")
     else:

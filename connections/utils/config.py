@@ -30,7 +30,11 @@ RESULTS_DIR = DATA_DIR / "results"
 # Engine cache: outputs of steps 3-5 live in RUNS_DIR/<START_DATE>_<END_DATE>/engine-v<ENGINE_VERSION>/.
 # Bump ENGINE_VERSION whenever a change alters predictions, triggers or events,
 # so a new run never reuses results produced by older code.
-ENGINE_VERSION = "2"
+ENGINE_VERSION = "3"
+# Steps 3-4 (background prediction, FOCuS) are unchanged since this engine version: a run of the
+# current version may reuse pred/ and trig/ of the matching run of that version (symlinked, declared
+# in manifest.json). v3 changed only step 5 (B <= 0 invalid in the event significance).
+PRED_TRIG_COMPATIBLE_SINCE = "2"
 RUNS_DIR = DATA_DIR / "runs"
 
 

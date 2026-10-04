@@ -96,6 +96,51 @@ class TestResolve(OptionsTestCase):
             obtain_model(object(), o, {})
 
 
+class TestReuseAcrossEngineVersions(OptionsTestCase):
+    """engine-v3 runs reuse pred/ and trig/ of the matching engine-v2 run (step 5 only changes)."""
+
+    def make_source(self, name: str, bundle: str):
+        src = self.runs / name
+        for f in ("pred/frg.csv", "pred/bkg.csv", "trig/trig.csv", "trig/offset.csv"):
+            (src / f).parent.mkdir(parents=True, exist_ok=True)
+            (src / f).write_text("x")
+        (src / "manifest.json").write_text(json.dumps({"parameters": {"model_bundle": bundle}}))
+        return src
+
+    def resolve_v3(self, **env):
+        return resolve_run_options(env, *P2019, self.runs / "engine-v3", self.nn_dir, reuse_source_dir=self.default_run)
+
+    def test_unlabelled_v3_reuses_v2(self):
+        self.make_source("engine-v2", "data/nn_model/bundles/legacy")
+        o = self.resolve_v3()
+        self.assertEqual((o.mode, o.run_dir, o.reuse_source), ("reuse_pred", self.runs / "engine-v3", self.default_run))
+        self.assertEqual(str(o.bundle_dir), "data/nn_model/bundles/legacy")
+
+    def test_labelled_v3_reuses_labelled_v2_without_bundle_checks(self):
+        self.make_source("engine-v2-seed1", "data/nn_model/bundles/model_seed1")
+        (self.nn_dir / "bundles" / "model_2019-03-01_2019-06-30_seed1").mkdir()  # would need REUSE_BUNDLE otherwise
+        o = self.resolve_v3(DEEPGRB_RUN_LABEL="seed1")
+        self.assertEqual((o.mode, o.run_dir), ("reuse_pred", self.runs / "engine-v3-seed1"))
+        self.assertEqual(o.reuse_source, self.runs / "engine-v2-seed1")
+
+    def test_force_train_never_reuses(self):
+        self.make_source("engine-v2-seed1", "x")
+        o = self.resolve_v3(DEEPGRB_RUN_LABEL="seed1", DEEPGRB_TRAIN_SEED="1", DEEPGRB_FORCE_TRAIN="1")
+        self.assertEqual(o.mode, "train")
+
+    def test_incomplete_source_is_not_reused(self):
+        src = self.make_source("engine-v2-seed2", "x")
+        (src / "trig" / "offset.csv").unlink()
+        with self.assertRaises(RunOptionsError):  # falls back to the normal rules: no bundle, no training flag
+            self.resolve_v3(DEEPGRB_RUN_LABEL="seed2")
+
+    def test_existing_labelled_v3_folder_stops(self):
+        self.make_source("engine-v2-seed1", "x")
+        (self.runs / "engine-v3-seed1").mkdir()
+        with self.assertRaises(RunOptionsError):
+            self.resolve_v3(DEEPGRB_RUN_LABEL="seed1")
+
+
 class FakeNN:
     def __init__(self):
         self.calls = []

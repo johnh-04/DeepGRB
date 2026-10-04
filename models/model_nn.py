@@ -113,6 +113,15 @@ def _lr_schedule(base_lr: float):
     return schedule
 
 
+def count_nonpositive_predictions(bkg_path: Path) -> Dict[str, int]:
+    """Cells of a background matrix with predicted rate <= 0, and bins where any/all channels are <= 0."""
+    keys = get_keys()
+    b = pd.read_csv(bkg_path, usecols=keys).to_numpy(dtype=float)
+    bad = b <= 0  # NaN (masked) compares False
+    return {"cells": int(bad.sum()), "bins_any_channel": int(bad.any(axis=1).sum()),
+            "bins_all_channels": int(bad.all(axis=1).sum()), "channels": len(keys), "bins": int(len(b))}
+
+
 class ModelNN:
     """Dense regressor from orbital features to the 36 NaI count rates."""
 

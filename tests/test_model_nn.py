@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from models.model_nn import COL_DET_POS, COL_SAT_POS, ModelNN, met_to_utc, saa_mask_indices
+from models.model_nn import COL_DET_POS, COL_SAT_POS, ModelNN, count_nonpositive_predictions, met_to_utc, saa_mask_indices
 from utils.keys import get_keys
 
 KEYS = get_keys()
@@ -29,6 +29,19 @@ class TestTime(unittest.TestCase):
     def test_met_to_utc_matches_grb190303240_bin(self):
         ts = met_to_utc([573284724.164136])
         self.assertEqual(str(ts.iloc[0]), "2019-03-03 05:45:19.164136")
+
+
+class TestCountNonpositive(unittest.TestCase):
+    def test_counts_cells_and_bins(self):
+        b = pd.DataFrame(100.0, index=range(4), columns=KEYS)
+        b.loc[1, KEYS] = 0.0          # whole bin at zero
+        b.loc[2, "n3_r1"] = -1.0      # one negative cell
+        b.loc[3, KEYS] = np.nan       # masked bin: not counted
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bkg.csv"
+            b.to_csv(path, index=False)
+            c = count_nonpositive_predictions(path)
+        self.assertEqual((c["cells"], c["bins_any_channel"], c["bins_all_channels"]), (37, 2, 1))
 
 
 class TestSaaMask(unittest.TestCase):
