@@ -37,6 +37,57 @@ def rng(s: pd.Series, fmt: str = ".0f") -> str:
     return f"{format(s.min(), fmt)}–{format(s.max(), fmt)}"
 
 
+def zero_prediction_section() -> list:
+    """Section on the bins where the seed1 network predicts zero (benchmark.analysis.zero_prediction)."""
+    if not (OUT / "zero_prediction_summary.json").exists():
+        return []
+    Z = json.loads((OUT / "zero_prediction_summary.json").read_text())
+    bins = pd.read_csv(OUT / "zero_prediction_bins.csv")
+    inp = pd.read_csv(OUT / "zero_prediction_inputs.csv")
+    sens = pd.read_csv(OUT / "zero_prediction_sensitivity.csv")
+    zb, nb = bins[bins["zero_bin"]], bins[~bins["zero_bin"]]
+    w = inp[inp["feature"].isin(["w1", "w2", "w3"])]
+    restore = sens[sens["out_sum_after_replacing"] > 0].groupby("row")["feature"].apply(lambda f: ", ".join(sorted(f)) if len(f) <= 3 else f"{len(f)} input")
+    full_zero = zb[zb["seed1_channels_le0"] == 36]
+    adjacent = nb[(nb["seed1_pred_sum_r1"] < 0.8 * nb["legacy_pred_sum_r1"])]
+    tab = zb[["timestamp", "dt_prev_s", "n_nan_inputs", "max_abs_z", "feature_max_abs_z", "max_jump_over_p999",
+              "seed1_channels_le0", "preact_max", "penultimate_mean_abs", "legacy_pred_sum_r1"]].assign(
+        timestamp=zb["timestamp"].str.slice(0, 19), inputs_that_restore=[restore.get(r, "-") for r in zb["row"]])
+    return [
+        "## 5b. Bin con fondo previsto nullo nella rete seed1",
+        "",
+        "Generato da `python -m benchmark.analysis.zero_prediction` (sola lettura: dataset ricostruito con `ModelNN.prepare`, "
+        "allineato riga per riga a `pred/`; bundle `model_2019-03-01_2019-06-30_seed1`).",
+        "",
+        f"- **Dove**: {len(zb)} bin, {Z['cells']} celle, in due tratti consecutivi: "
+        + ", ".join(t[:19] for t in Z["zero_timestamps"]) + ".",
+        f"- **Ingressi**: nessun NaN ({Z['nan_inputs_in_zero_bins']} su {len(zb)} × 60), bin regolari (Δt dal precedente "
+        f"{zb['dt_prev_s'].min():.3f}–{zb['dt_prev_s'].max():.3f} s), nessun salto: la variazione massima rispetto al bin precedente è "
+        f"{Z['max_jump_over_p999_zero_bins']:.2f} volte il 99.9° percentile dei salti tipici (vicini: {Z['max_jump_over_p999_neighbours']:.2f}).",
+        f"- **Cosa hanno di anomalo**: la velocità angolare. `w1`, `w2`, `w3` sono **insieme** nella coda della distribuzione del periodo "
+        f"(percentili {w['percentile_in_period'].min():.2f}–{w['percentile_in_period'].max():.3f}; |z| fino a {w['z'].abs().max():.2f} rispetto allo "
+        f"scaler di training). Non sono fuori scala: |z| massimo nei bin a zero {Z['max_abs_z_zero_bins']:.2f}, nei bin vicini {Z['max_abs_z_neighbours']:.2f}.",
+        f"- **Perché la rete dà 0**: la pre-attivazione dello strato di uscita (ReLU) è negativa su tutti i canali nei bin a zero pieno "
+        f"(massimo {full_zero['preact_max'].max():.0f}; nei vicini il massimo è almeno {Z['preact_max_neighbours_min']:.0f}), e l'attivazione media "
+        f"del penultimo strato è {full_zero['penultimate_mean_abs'].min():.1f}–{full_zero['penultimate_mean_abs'].max():.1f} contro "
+        f"{nb['penultimate_mean_abs'].min():.2f}–{nb['penultimate_mean_abs'].max():.2f} nei vicini: la rappresentazione interna esplode e la ReLU finale taglia a zero. "
+        "Non è un clipping esplicito né un ingresso NaN o fuori scala.",
+        f"- **Sensibilità**: sostituendo un solo ingresso con la media dei vicini, nei bin a zero pieno l'uscita torna positiva solo con `w1` o `w2` "
+        "(tabella sotto); con tutti gli ingressi dei vicini l'uscita è positiva in ogni caso "
+        f"({'sì' if Z['neighbour_mean_input_output_positive'] else 'no'}). La rete seed1 ha una risposta molto ripida in questa regione rara dello spazio "
+        f"degli ingressi; la rete legacy sugli stessi bin prevede {min(Z['legacy_pred_sum_r1_zero_bins']):.0f}–{max(Z['legacy_pred_sum_r1_zero_bins']):.0f} "
+        "(somma dei 12 NaI in r1), valori normali.",
+        f"- **Bin adiacenti**: {len(adjacent)} bin vicini hanno una predizione seed1 inferiore all'80% di quella legacy "
+        f"({', '.join(adjacent['timestamp'].str.slice(0, 19))}): sono i bin da cui partono gli eventi seed1 6 e 9. "
+        "Anche l'evento 9 è quindi un artefatto di questa instabilità, pur non contenendo bin a zero.",
+        "",
+        md(tab, ".2f"),
+        "",
+        "Flag di post-processing `near_zero_prediction` (evento esteso di 5 bin che tocca un bin con fondo previsto ≤ 0): `models/saa_flags.py`, riportato da `benchmark/validate.py`.",
+        "",
+    ]
+
+
 def main() -> None:
     S = json.loads((OUT / "summary.json").read_text())
     ev = {n: pd.read_csv(OUT / f"events_orbit_{n}.csv") for n in RUNS}
@@ -234,6 +285,7 @@ def main() -> None:
         "significatività esplosa; la correzione è nel motore v3 (vedi `docs/WORKLOG.md`). Gli eventi adiacenti ai bin a zero non cambiano S, "
         "ma il loro trigger parte subito dopo il reset di FOCuS su quei bin ed esistono solo nella rete seed1: probabili artefatti della rete, non verificati.",
         "",
+        *zero_prediction_section(),
         "## 6. Limiti",
         "",
         "- Le bande A/B sono state scelte guardando i dati di seed1: i p-value binomiali misurano quanto il raggruppamento è anomalo, non sono un test cieco.",

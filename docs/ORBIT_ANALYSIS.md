@@ -1,6 +1,6 @@
 # Analisi orbitale degli eventi della baseline 2019
 
-Generato da `python -m benchmark.analysis.orbit_analysis` e `python -m benchmark.analysis.orbit_report` (commit `1e87ac1`). Sola lettura sugli output del motore: nessuna run, bundle o parametro modificato. Tutti i numeri vengono dai file in `benchmark/analysis/out/`.
+Generato da `python -m benchmark.analysis.orbit_analysis` e `python -m benchmark.analysis.orbit_report` (commit `082aeb2`). Sola lettura sugli output del motore: nessuna run, bundle o parametro modificato. Tutti i numeri vengono dai file in `benchmark/analysis/out/`.
 
 Run analizzate: `engine-v2` (rete legacy del 2026-09-21) e `engine-v2-seed1` (rete riaddestrata, seed 1). Eventi: v2 144 (53 senza controparte), seed1 136 (46 senza controparte). "Senza controparte" = né catalogo trigger GBM né tabelle di Crupi (regola primaria di `benchmark/validate.py`).
 
@@ -177,6 +177,28 @@ Osservazioni (descrittive, nessun verdetto):
 
 - **Alta L.** 15/19 "altri" hanno L ≥ 1.4 (abbinati: 20/90; tempi casuali: 16.8%). Si concentrano vicino ai punti di massima latitudine dell'orbita (|lat| ≥ 24°: 14/19), cioè alle latitudini geomagnetiche più alte raggiunte da Fermi: zona compatibile con precipitazione di particelle, ma qui non verificata.
 - **Fondo previsto nullo.** Nella run seed1 la rete prevede fondo 0 in 212 celle (6 bin, due tratti di 3 bin consecutivi); nella v2 in 0. Bin a zero **dentro** la finestra di S: eventi [6]; finestra di S che inizia o finisce **a un bin** da quei bin: eventi [9]. In engine v2 `models/analyze.py::event_significance` non scartava B ≤ 0 (FOCuS sì) e l'evento con i bin a zero nella finestra aveva una significatività esplosa; la correzione è nel motore v3 (vedi `docs/WORKLOG.md`). Gli eventi adiacenti ai bin a zero non cambiano S, ma il loro trigger parte subito dopo il reset di FOCuS su quei bin ed esistono solo nella rete seed1: probabili artefatti della rete, non verificati.
+
+## 5b. Bin con fondo previsto nullo nella rete seed1
+
+Generato da `python -m benchmark.analysis.zero_prediction` (sola lettura: dataset ricostruito con `ModelNN.prepare`, allineato riga per riga a `pred/`; bundle `model_2019-03-01_2019-06-30_seed1`).
+
+- **Dove**: 6 bin, 212 celle, in due tratti consecutivi: 2019-03-07 01:51:27, 2019-03-07 01:51:31, 2019-03-07 01:51:35, 2019-03-09 04:40:26, 2019-03-09 04:40:30, 2019-03-09 04:40:34.
+- **Ingressi**: nessun NaN (0 su 6 × 60), bin regolari (Δt dal precedente 4.096–4.096 s), nessun salto: la variazione massima rispetto al bin precedente è 1.36 volte il 99.9° percentile dei salti tipici (vicini: 1.30).
+- **Cosa hanno di anomalo**: la velocità angolare. `w1`, `w2`, `w3` sono **insieme** nella coda della distribuzione del periodo (percentili 99.51–99.994; |z| fino a 5.20 rispetto allo scaler di training). Non sono fuori scala: |z| massimo nei bin a zero 5.20, nei bin vicini 5.05.
+- **Perché la rete dà 0**: la pre-attivazione dello strato di uscita (ReLU) è negativa su tutti i canali nei bin a zero pieno (massimo -350; nei vicini il massimo è almeno 324), e l'attivazione media del penultimo strato è 9.1–18.8 contro 0.89–1.63 nei vicini: la rappresentazione interna esplode e la ReLU finale taglia a zero. Non è un clipping esplicito né un ingresso NaN o fuori scala.
+- **Sensibilità**: sostituendo un solo ingresso con la media dei vicini, nei bin a zero pieno l'uscita torna positiva solo con `w1` o `w2` (tabella sotto); con tutti gli ingressi dei vicini l'uscita è positiva in ogni caso (sì). La rete seed1 ha una risposta molto ripida in questa regione rara dello spazio degli ingressi; la rete legacy sugli stessi bin prevede 4553–4569 (somma dei 12 NaI in r1), valori normali.
+- **Bin adiacenti**: 2 bin vicini hanno una predizione seed1 inferiore all'80% di quella legacy (2019-03-07 01:51:23, 2019-03-09 04:40:38): sono i bin da cui partono gli eventi seed1 6 e 9. Anche l'evento 9 è quindi un artefatto di questa instabilità, pur non contenendo bin a zero.
+
+| timestamp | dt_prev_s | n_nan_inputs | max_abs_z | feature_max_abs_z | max_jump_over_p999 | seed1_channels_le0 | preact_max | penultimate_mean_abs | legacy_pred_sum_r1 | inputs_that_restore |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2019-03-07 01:51:27 | 4.10 | 0 | 5.20 | w2 | 1.34 | 36 | -443.43 | 10.32 | 4552.85 | w1, w2 |
+| 2019-03-07 01:51:31 | 4.10 | 0 | 5.13 | w2 | 1.36 | 36 | -578.80 | 12.66 | 4553.60 | w1, w2 |
+| 2019-03-07 01:51:35 | 4.10 | 0 | 4.83 | w2 | 1.32 | 32 | 180.34 | 2.26 | 4553.35 | 60 input |
+| 2019-03-09 04:40:26 | 4.10 | 0 | 4.54 | w3 | 1.30 | 36 | -349.78 | 9.14 | 4568.63 | w1, w2 |
+| 2019-03-09 04:40:30 | 4.10 | 0 | 4.83 | w3 | 1.36 | 36 | -876.23 | 18.82 | 4567.50 | w1, w2 |
+| 2019-03-09 04:40:34 | 4.10 | 0 | 4.88 | w3 | 1.36 | 36 | -451.77 | 11.17 | 4565.75 | w1, w2 |
+
+Flag di post-processing `near_zero_prediction` (evento esteso di 5 bin che tocca un bin con fondo previsto ≤ 0): `models/saa_flags.py`, riportato da `benchmark/validate.py`.
 
 ## 6. Limiti
 
