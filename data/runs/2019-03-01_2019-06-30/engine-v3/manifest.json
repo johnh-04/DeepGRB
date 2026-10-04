@@ -1,0 +1,103 @@
+{
+  "parameters": {
+    "period": {
+      "start_date": "2019-03-01",
+      "end_date": "2019-06-30"
+    },
+    "engine_version": "3",
+    "bin_length_s": 4.096,
+    "energy_ranges_keV": {
+      "n": [
+        [
+          28,
+          50
+        ],
+        [
+          50,
+          300
+        ],
+        [
+          300,
+          500
+        ]
+      ],
+      "b": [
+        [
+          756,
+          5025
+        ],
+        [
+          5025,
+          50000
+        ]
+      ]
+    },
+    "saa_gap_s": 500.0,
+    "saa_exclusion_bins_each_side": 150,
+    "focus": {
+      "mu_min": 1.2,
+      "t_max_bins": 50,
+      "input": "rates (counts/s)"
+    },
+    "trigger": {
+      "threshold_sigma": 3.0,
+      "range": "r1",
+      "min_detectors": 1,
+      "max_detectors_exclusive": 13
+    },
+    "merge_s": 600,
+    "significance": "S=sum(N-B)/sqrt(sum(B)), triggered detectors, offset-extended interval, max over 21 quantile cuts",
+    "flags": {
+      "edge_window_s": 200.0,
+      "region_deg": 3.5,
+      "region_grid_deg": 0.1,
+      "zero_pad_bins": 5
+    }
+  },
+  "run_label": null,
+  "model": {
+    "bundle": "data/nn_model/bundles/model_03-2019_07-2019_4.4_2026-09-21",
+    "mode": "reuse_pred",
+    "seed": null,
+    "checksum": "3b953656d5e06c815ccd90d76b5bef47f703216de4c68bc5a08bffe73f5fc4c5"
+  },
+  "runs": [
+    {
+      "started": "2026-10-04T16:57:10.694598+00:00",
+      "git_commit": "21e4db17030c95ee08f7761b1abdcba01cae62c9",
+      "code_dirty": false,
+      "steps": [
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "versions": {
+        "python": "3.9.23",
+        "pandas": "1.5.3"
+      }
+    }
+  ],
+  "reused_from": {
+    "run": "data/runs/2019-03-01_2019-06-30/engine-v2",
+    "engine_version": "2",
+    "how": "symlink",
+    "steps": [
+      "3 pred/",
+      "4 trig/"
+    ],
+    "model_bundle": "data/nn_model/bundles/model_03-2019_07-2019_4.4_2026-09-21",
+    "source_git_commit": "1dfb652201332dbc801553d4e3cc1f30a81160b5"
+  },
+  "predicted_zero_cells": {
+    "cells": 0,
+    "bins_any_channel": 0,
+    "bins_all_channels": 0,
+    "channels": 36,
+    "bins": 2238398,
+    "source": "reused from engine-v2"
+  }
+}

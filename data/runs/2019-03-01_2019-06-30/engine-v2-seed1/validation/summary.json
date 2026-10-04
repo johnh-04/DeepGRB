@@ -1,0 +1,133 @@
+{
+  "generated": "2026-10-04 16:40 UTC",
+  "validation_git_commit": "98d3c97c11e00cf05274dd770a874de9eaf0fd65",
+  "versions": {
+    "python": "3.9.23",
+    "pandas": "1.5.3",
+    "numpy": "1.26.4"
+  },
+  "run": "data/runs/2019-03-01_2019-06-30/engine-v2-seed1",
+  "period": {
+    "start_date": "2019-03-01",
+    "end_date": "2019-06-30"
+  },
+  "days": 122,
+  "data_days": 122,
+  "match_margin_s": 8.192,
+  "events": {
+    "total": 136,
+    "CE": {
+      "R": 102,
+      "S": 11,
+      "P": 23
+    },
+    "match_gbm": 67,
+    "match_crupi_known": 70,
+    "match_crupi_unknown": 21,
+    "without_counterpart": 46
+  },
+  "gbm": {
+    "catalog_triggers": 143,
+    "available": 120,
+    "missing_no_data": 23,
+    "near_saa_150s": 8,
+    "detected": 67,
+    "grb_total": 93,
+    "grb_missing": 15,
+    "grb_available": 78,
+    "grb_detected": 59,
+    "long_available": 65,
+    "long_detected": 54,
+    "short_available": 13,
+    "short_detected": 5,
+    "grb_without_t90": 0
+  },
+  "flags": {
+    "zero_prediction_bins": 6,
+    "near_zero_events": [
+      6,
+      9
+    ],
+    "short_unmasked_passages": 45
+  },
+  "crupi": {
+    "known": {
+      "in_window": 71,
+      "total": 74,
+      "matched": 70,
+      "by_tier": {
+        "R": [
+          62,
+          62
+        ],
+        "S": [
+          3,
+          3
+        ],
+        "P": [
+          5,
+          6
+        ]
+      }
+    },
+    "unknown": {
+      "in_window": 24,
+      "total": 25,
+      "matched": 21,
+      "by_tier": {
+        "R": [
+          12,
+          13
+        ],
+        "S": [
+          3,
+          3
+        ],
+        "P": [
+          6,
+          8
+        ]
+      }
+    },
+    "known_RS": [
+      65,
+      65
+    ],
+    "unknown_RS": [
+      15,
+      16
+    ],
+    "paper": {
+      "grb_burst_catalog": 96,
+      "grb_missing": 15,
+      "grb_detected": 65,
+      "grb_available": 81,
+      "long_detected": 60,
+      "long_available": 68,
+      "short_detected": 5,
+      "short_available": 13,
+      "events_total": 100
+    }
+  },
+  "classification": null,
+  "stability": [
+    {
+      "bundle": "model_03-2019_07-2019_4.4_2026-09-21",
+      "run": "engine-v2",
+      "events": 144,
+      "pairs": 126,
+      "only_here": 10,
+      "only_there": 18
+    }
+  ],
+  "model_bundle": "data/nn_model/bundles/model_2019-03-01_2019-06-30_seed1",
+  "model_description": "seed di training 1 (da `metadata.json` del bundle)",
+  "events_per_network": {
+    "model_03-2019_07-2019_4.4_2026-09-21": [
+      144
+    ],
+    "model_2019-03-01_2019-06-30_seed1": [
+      136
+    ]
+  }
+}

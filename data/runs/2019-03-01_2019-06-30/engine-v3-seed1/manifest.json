@@ -1,0 +1,115 @@
+{
+  "parameters": {
+    "period": {
+      "start_date": "2019-03-01",
+      "end_date": "2019-06-30"
+    },
+    "engine_version": "3",
+    "bin_length_s": 4.096,
+    "energy_ranges_keV": {
+      "n": [
+        [
+          28,
+          50
+        ],
+        [
+          50,
+          300
+        ],
+        [
+          300,
+          500
+        ]
+      ],
+      "b": [
+        [
+          756,
+          5025
+        ],
+        [
+          5025,
+          50000
+        ]
+      ]
+    },
+    "saa_gap_s": 500.0,
+    "saa_exclusion_bins_each_side": 150,
+    "focus": {
+      "mu_min": 1.2,
+      "t_max_bins": 50,
+      "input": "rates (counts/s)"
+    },
+    "trigger": {
+      "threshold_sigma": 3.0,
+      "range": "r1",
+      "min_detectors": 1,
+      "max_detectors_exclusive": 13
+    },
+    "merge_s": 600,
+    "significance": "S=sum(N-B)/sqrt(sum(B)), triggered detectors, offset-extended interval, max over 21 quantile cuts",
+    "flags": {
+      "edge_window_s": 200.0,
+      "region_deg": 3.5,
+      "region_grid_deg": 0.1,
+      "zero_pad_bins": 5
+    }
+  },
+  "run_label": "seed1",
+  "model": {
+    "bundle": "data/nn_model/bundles/model_2019-03-01_2019-06-30_seed1",
+    "mode": "reuse_pred",
+    "seed": 1,
+    "checksum": "0eae86f65d97b285976955b98d80a8b5df8202fb8ea9df84973958eb7bc9ee08"
+  },
+  "runs": [
+    {
+      "started": "2026-10-04T16:51:04.625256+00:00",
+      "git_commit": "21e4db17030c95ee08f7761b1abdcba01cae62c9",
+      "code_dirty": false,
+      "steps": [
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "versions": {
+        "python": "3.9.23",
+        "pandas": "1.5.3"
+      }
+    },
+    {
+      "started": "2026-10-04T17:03:49.558509+00:00",
+      "git_commit": "21e4db17030c95ee08f7761b1abdcba01cae62c9",
+      "code_dirty": false,
+      "steps": [
+        9
+      ],
+      "versions": {
+        "python": "3.9.23",
+        "pandas": "1.5.3"
+      }
+    }
+  ],
+  "reused_from": {
+    "run": "data/runs/2019-03-01_2019-06-30/engine-v2-seed1",
+    "engine_version": "2",
+    "how": "symlink",
+    "steps": [
+      "3 pred/",
+      "4 trig/"
+    ],
+    "model_bundle": "data/nn_model/bundles/model_2019-03-01_2019-06-30_seed1",
+    "source_git_commit": "c244881db8be940fa0ec153d186d20563d530abb"
+  },
+  "predicted_zero_cells": {
+    "cells": 212,
+    "bins_any_channel": 6,
+    "bins_all_channels": 5,
+    "channels": 36,
+    "bins": 2238398,
+    "source": "reused from engine-v2-seed1"
+  }
+}

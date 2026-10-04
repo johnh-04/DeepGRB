@@ -1,0 +1,6 @@
+trigger_type,total_in_window,missing_no_data,available,detected
+GRB,93,15,78,60
+LOCLPAR,7,4,3,3
+SFLARE,5,0,5,5
+TGF,27,4,23,0
+UNCERT,11,0,11,0
