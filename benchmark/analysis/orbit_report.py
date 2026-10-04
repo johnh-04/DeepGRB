@@ -226,12 +226,13 @@ def main() -> None:
         f"tempi casuali: {S['null_L_ge_1.4_%']:.1f}%). Si concentrano vicino ai punti di massima latitudine dell'orbita "
         f"(|lat| ≥ 24°: {int((O['lat'].abs() >= 24).sum())}/{len(O)}), cioè alle latitudini geomagnetiche più alte raggiunte da Fermi: "
         "zona compatibile con precipitazione di particelle, ma qui non verificata.",
-        f"- **Fondo previsto nullo (artefatto della rete).** Nella run seed1 la rete prevede fondo 0 in "
-        f"{S['runs']['seed1']['zero_bkg_cells']} celle ({S['runs']['seed1']['zero_bkg_rows']} bin interi); nella v2 in "
-        f"{S['runs']['v2']['zero_bkg_cells']}. Questi bin toccano gli eventi seed1 {S['runs']['seed1']['events_touching_zero_bkg']} "
-        f"(l'evento 6 ha σ_C {others.loc[others['trig_ids'] == 6, 'sigma_C'].iloc[0]:.0f}). FOCuS tratta il fondo ≤ 0 come non valido, "
-        "ma `models/analyze.py::event_significance` scarta solo i NaN: con B = 0 la significatività esplode. "
-        "Sono artefatti, non eventi; la correzione (trattare B ≤ 0 come non valido anche in analyze) cambierebbe gli eventi e richiede `ENGINE_VERSION` 3: **non applicata** (vincolo: motore in sola lettura).",
+        f"- **Fondo previsto nullo.** Nella run seed1 la rete prevede fondo 0 in "
+        f"{S['runs']['seed1']['zero_bkg_cells']} celle ({S['runs']['seed1']['zero_bkg_rows']} bin, due tratti di 3 bin consecutivi); nella v2 in "
+        f"{S['runs']['v2']['zero_bkg_cells']}. Bin a zero **dentro** la finestra di S: eventi {S['runs']['seed1']['events_zero_bkg_inside_S_window']}; "
+        f"finestra di S che inizia o finisce **a un bin** da quei bin: eventi {S['runs']['seed1']['events_zero_bkg_adjacent_1bin']}. "
+        "In engine v2 `models/analyze.py::event_significance` non scartava B ≤ 0 (FOCuS sì) e l'evento con i bin a zero nella finestra aveva una "
+        "significatività esplosa; la correzione è nel motore v3 (vedi `docs/WORKLOG.md`). Gli eventi adiacenti ai bin a zero non cambiano S, "
+        "ma il loro trigger parte subito dopo il reset di FOCuS su quei bin ed esistono solo nella rete seed1: probabili artefatti della rete, non verificati.",
         "",
         "## 6. Limiti",
         "",

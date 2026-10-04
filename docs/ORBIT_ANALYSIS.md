@@ -1,6 +1,6 @@
 # Analisi orbitale degli eventi della baseline 2019
 
-Generato da `python -m benchmark.analysis.orbit_analysis` e `python -m benchmark.analysis.orbit_report` (commit `c244881`). Sola lettura sugli output del motore: nessuna run, bundle o parametro modificato. Tutti i numeri vengono dai file in `benchmark/analysis/out/`.
+Generato da `python -m benchmark.analysis.orbit_analysis` e `python -m benchmark.analysis.orbit_report` (commit `1e87ac1`). Sola lettura sugli output del motore: nessuna run, bundle o parametro modificato. Tutti i numeri vengono dai file in `benchmark/analysis/out/`.
 
 Run analizzate: `engine-v2` (rete legacy del 2026-09-21) e `engine-v2-seed1` (rete riaddestrata, seed 1). Eventi: v2 144 (53 senza controparte), seed1 136 (46 senza controparte). "Senza controparte" = né catalogo trigger GBM né tabelle di Crupi (regola primaria di `benchmark/validate.py`).
 
@@ -176,7 +176,7 @@ Gli eventi flaggati restano nel catalogo, con la segnalazione "possibile fondo d
 Osservazioni (descrittive, nessun verdetto):
 
 - **Alta L.** 15/19 "altri" hanno L ≥ 1.4 (abbinati: 20/90; tempi casuali: 16.8%). Si concentrano vicino ai punti di massima latitudine dell'orbita (|lat| ≥ 24°: 14/19), cioè alle latitudini geomagnetiche più alte raggiunte da Fermi: zona compatibile con precipitazione di particelle, ma qui non verificata.
-- **Fondo previsto nullo (artefatto della rete).** Nella run seed1 la rete prevede fondo 0 in 212 celle (6 bin interi); nella v2 in 0. Questi bin toccano gli eventi seed1 [6, 9] (l'evento 6 ha σ_C 881). FOCuS tratta il fondo ≤ 0 come non valido, ma `models/analyze.py::event_significance` scarta solo i NaN: con B = 0 la significatività esplode. Sono artefatti, non eventi; la correzione (trattare B ≤ 0 come non valido anche in analyze) cambierebbe gli eventi e richiede `ENGINE_VERSION` 3: **non applicata** (vincolo: motore in sola lettura).
+- **Fondo previsto nullo.** Nella run seed1 la rete prevede fondo 0 in 212 celle (6 bin, due tratti di 3 bin consecutivi); nella v2 in 0. Bin a zero **dentro** la finestra di S: eventi [6]; finestra di S che inizia o finisce **a un bin** da quei bin: eventi [9]. In engine v2 `models/analyze.py::event_significance` non scartava B ≤ 0 (FOCuS sì) e l'evento con i bin a zero nella finestra aveva una significatività esplosa; la correzione è nel motore v3 (vedi `docs/WORKLOG.md`). Gli eventi adiacenti ai bin a zero non cambiano S, ma il loro trigger parte subito dopo il reset di FOCuS su quei bin ed esistono solo nella rete seed1: probabili artefatti della rete, non verificati.
 
 ## 6. Limiti
 

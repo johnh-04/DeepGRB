@@ -29,6 +29,7 @@ from astropy.io import fits
 from gbm.data import PosHist
 from scipy import stats
 
+from benchmark.matching import overlap_one_to_one as _overlap
 from connections.utils.config import BASE_DIR, DATA_DIR, END_DATE, FOLD_POSHIST, GBM_TRIG_DB, START_DATE
 from utils.period import window_days
 
@@ -230,19 +231,8 @@ def load_run(name: str) -> Tuple[pd.DataFrame, np.ndarray, pd.Series]:
 
 
 def overlap_one_to_one(a: pd.DataFrame, b: pd.DataFrame, margin: float = 2 * BIN) -> List[Tuple[int, int, float]]:
-    """Pairs (i, j, |dstart|) of overlapping intervals [start_met, start_met + duration] +/- margin, greedy by |dstart|."""
-    a0, a1 = a["start_met"].to_numpy() - margin, a["start_met"].to_numpy() + a["duration"].to_numpy() + margin
-    b0, b1 = b["start_met"].to_numpy() - margin, b["start_met"].to_numpy() + b["duration"].to_numpy() + margin
-    cand = []
-    for i in range(len(a)):
-        js = np.where((b0 <= a1[i]) & (a0[i] <= b1))[0]
-        cand += [(abs(a["start_met"].iat[i] - b["start_met"].iat[j]), i, j) for j in js]
-    cand.sort()
-    used_a, used_b, pairs = set(), set(), []
-    for d, i, j in cand:
-        if i not in used_a and j not in used_b:
-            used_a.add(i); used_b.add(j); pairs.append((i, j, d))
-    return pairs
+    """Pairs of overlapping events of two runs (benchmark.matching.overlap_one_to_one)."""
+    return _overlap(a["start_met"], a["duration"], b["start_met"], b["duration"], margin)
 
 
 # ----------------------------------------------------------------------------- residuals
@@ -479,11 +469,20 @@ def main() -> None:
     for name, ev in events.items():
         bk = pd.read_csv(RUNS[name]["run"] / "pred" / "bkg.csv", usecols=get_keys()).to_numpy(dtype=float)
         zero_rows = np.where((bk <= 0).any(axis=1))[0]
-        touched = [int(r["trig_ids"]) for _, r in ev.iterrows()
-                   if ((zero_rows >= int(r["start_index"]) - 60) & (zero_rows <= int(r["end_index"]) + 1)).any()]
+        ts = pd.read_csv(RUNS[name]["run"] / "pred" / "frg.csv", usecols=["timestamp"])["timestamp"]
+        pos = pd.Series(np.arange(len(ts)), index=ts.values)
+        pos = pos[~pos.index.duplicated(keep="first")]
+        inside, adjacent = [], []
+        for _, r in ev.iterrows():
+            s0, s1 = int(pos[r["start_times_offset"]]), int(r["end_index"]) - 1  # window of S (offset start .. last bin)
+            if ((zero_rows >= s0) & (zero_rows <= s1)).any():
+                inside.append(int(r["trig_ids"]))
+            elif len(zero_rows) and min(np.abs(zero_rows - s0).min(), np.abs(zero_rows - s1).min()) <= 1:
+                adjacent.append(int(r["trig_ids"]))
         summary["runs"][name]["zero_bkg_cells"] = int((bk <= 0).sum())
         summary["runs"][name]["zero_bkg_rows"] = int(len(zero_rows))
-        summary["runs"][name]["events_touching_zero_bkg"] = touched
+        summary["runs"][name]["events_zero_bkg_inside_S_window"] = inside
+        summary["runs"][name]["events_zero_bkg_adjacent_1bin"] = adjacent
     # High-L summary (all groups and null)
     summary["high_L_threshold"] = 1.4
     for name, ev in events.items():
