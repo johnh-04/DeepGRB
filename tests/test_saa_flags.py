@@ -4,7 +4,8 @@ import unittest
 
 import numpy as np
 
-from models.saa_flags import EDGE_WINDOW_S, PoshistTrack, compute_saa_flags, saa_passages, unmasked_passages
+from models.saa_flags import (EDGE_WINDOW_S, PoshistTrack, compute_saa_flags, near_zero_prediction_flag, saa_passages,
+                              unmasked_passages, zero_prediction_rows)
 
 
 def track(t, lat, lon, saa) -> PoshistTrack:
@@ -44,6 +45,22 @@ class TestFlags(unittest.TestCase):
         self.assertTrue(f["saa_region_proximity"].iloc[0])   # inside the flagged region
         self.assertLess(f["saa_region_dist_deg"].iloc[0], 0.2)
         self.assertFalse(f["saa_region_proximity"].iloc[1])  # far west of it
+
+
+class TestNearZeroPrediction(unittest.TestCase):
+    def test_rows_and_padding(self):
+        bkg = np.full((40, 3), 100.0)
+        bkg[20, 1] = 0.0
+        bkg[30, :] = np.nan  # masked bin: not a zero prediction
+        zr = zero_prediction_rows(bkg)
+        self.assertEqual(zr.tolist(), [20])
+        # events as [start_index, end_index) in bins
+        starts, ends = [10, 21, 26, 14, 0], [15, 24, 29, 16, 3]
+        # 10..14 +5 -> 19: no; 21..23 -5 -> 16: yes; 26..28 -5 -> 21: no; 14..15 +5 -> 20: yes; 0..2: no
+        self.assertEqual(near_zero_prediction_flag(starts, ends, zr).tolist(), [False, True, False, True, False])
+
+    def test_no_zero_rows(self):
+        self.assertFalse(near_zero_prediction_flag([5], [8], np.array([], dtype=int)).any())
 
 
 if __name__ == "__main__":

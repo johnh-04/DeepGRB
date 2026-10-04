@@ -1,7 +1,6 @@
 """
-Post-processing flags for events near the South Atlantic Anomaly (docs/ORBIT_ANALYSIS.md).
-
-They add columns to an event table and never change the list of events:
+Post-processing flags (docs/ORBIT_ANALYSIS.md). They add columns to an event table and never
+change the list of events:
 
 - saa_edge_short_passage: the event start (FOCuS change point) lies within EDGE_WINDOW_S before
   the entry or after the exit of an SAA passage whose data gap is not masked, i.e. the gap in the
@@ -9,6 +8,11 @@ They add columns to an event table and never change the list of events:
   on gaps > SAA_GAP_S).
 - saa_region_proximity: Fermi's position at the event start is within REGION_DEG of the ground
   region where the POSHIST SAA flag is set.
+
+- near_zero_prediction: the event bins [start_index, end_index - 1], extended by ZERO_PAD_BINS on
+  each side, include a bin where the predicted background is <= 0 on some channel (network
+  output clipped to zero; such bins are ignored by FOCuS and by S, but the neighbours can be
+  under-predicted too).
 
 SAA passages and the SAA region come from the POSHIST FLAGS (bit value 2), positions from SC_LAT/SC_LON.
 """
@@ -24,6 +28,7 @@ SAA_GAP_S = 500.0       # same threshold as the SAA masking of the background st
 EDGE_WINDOW_S = 200.0
 REGION_DEG = 3.5
 REGION_GRID_DEG = 0.1   # SAA region sampled on a 0.1 deg grid of flagged positions
+ZERO_PAD_BINS = 5
 
 
 class PoshistTrack:
@@ -124,3 +129,17 @@ def compute_saa_flags(t_start: Sequence[float], track: PoshistTrack, frg_met: np
         "fermi_lat": lat,
         "fermi_lon": lon,
     })
+
+
+def zero_prediction_rows(bkg: np.ndarray) -> np.ndarray:
+    """Row positions where the predicted background is <= 0 on at least one channel (NaN rows excluded)."""
+    return np.where((np.asarray(bkg, dtype=float) <= 0).any(axis=1))[0]
+
+
+def near_zero_prediction_flag(start_index: Sequence[int], end_index: Sequence[int], zero_rows: np.ndarray,
+                              pad: int = ZERO_PAD_BINS) -> np.ndarray:
+    """True when [start_index - pad, end_index - 1 + pad] contains a zero-prediction row."""
+    z = np.sort(np.asarray(zero_rows, dtype=int))
+    lo = np.asarray(start_index, dtype=int) - pad
+    hi = np.asarray(end_index, dtype=int) - 1 + pad
+    return np.searchsorted(z, hi, side="right") > np.searchsorted(z, lo, side="left")

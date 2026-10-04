@@ -27,7 +27,8 @@ import pandas as pd
 
 from benchmark.matching import BINLENGTH, PRIMARY_MARGIN, match_one_to_one, overlap_one_to_one
 from connections.utils.config import BASE_DIR, DATA_DIR, END_DATE, FOLD_POSHIST, GBM_BURST_DB, GBM_TRIG_DB, START_DATE, run_dir
-from models.saa_flags import EDGE_WINDOW_S, REGION_DEG, SAA_GAP_S, PoshistTrack, compute_saa_flags, unmasked_passages
+from models.saa_flags import (EDGE_WINDOW_S, REGION_DEG, SAA_GAP_S, ZERO_PAD_BINS, PoshistTrack, compute_saa_flags,
+                              near_zero_prediction_flag, unmasked_passages, zero_prediction_rows)
 from utils.fermi_time import utc_to_met
 from utils.keys import get_keys
 from utils.period import days_with_data, in_window, window_days
@@ -54,6 +55,7 @@ class RunData:
         self.met = frg["met"].to_numpy(dtype=float)
         self.timestamp = frg["timestamp"]
         self.valid = np.isfinite(bkg.to_numpy(dtype=float)).any(axis=1)
+        self.zero_rows = zero_prediction_rows(bkg.to_numpy(dtype=float))
         focus = pd.read_csv(run / "trig" / "trig.csv", usecols=get_keys(rs=["1"]))
         self.focus_r1_max = focus.max(axis=1, skipna=True).to_numpy(dtype=float)
         self.order = np.argsort(self.met, kind="stable")
@@ -392,6 +394,7 @@ def main() -> None:
     track = PoshistTrack.for_days(DATA_DIR / FOLD_POSHIST, days)
     flags = compute_saa_flags(ev["t_start"].to_numpy(), track, rd.met)
     flags.index = ev.index
+    flags["near_zero_prediction"] = near_zero_prediction_flag(ev["start_index"], ev["end_index"], rd.zero_rows)
     ev = pd.concat([ev, flags], axis=1)
     ev[["trig_ids", "start_times", "duration", "detectors", "sigma_C", "CE", "counterpart", "match_gbm",
         "match_crupi_known", "match_crupi_unknown"] + list(flags.columns)].to_csv(out / "events_flags.csv", index=False)
@@ -400,7 +403,8 @@ def main() -> None:
         flag_rows.append({"eventi": label, "n": len(sub),
                           "saa_edge_short_passage": int(sub["saa_edge_short_passage"].sum()),
                           "saa_region_proximity": int(sub["saa_region_proximity"].sum()),
-                          "almeno uno": int((sub["saa_edge_short_passage"] | sub["saa_region_proximity"]).sum())})
+                          "near_zero_prediction": int(sub["near_zero_prediction"].sum()),
+                          "almeno uno": int((sub["saa_edge_short_passage"] | sub["saa_region_proximity"] | sub["near_zero_prediction"]).sum())})
     flag_table = pd.DataFrame(flag_rows)
 
     lonely = ev[~(ev["match_gbm"] | ev["match_crupi_known"] | ev["match_crupi_unknown"])].copy()
@@ -418,7 +422,7 @@ def main() -> None:
         lonely = lonely.merge(pd.read_csv(cls_path)[["trig_ids"] + extra], on="trig_ids", how="left")
     lonely_cols = ["trig_ids", "start_times", "duration", "detectors", "sigma_r0", "sigma_r1", "sigma_r2", "sigma_C", "CE",
                    "catalog_triggers", "dist_saa_gap_s", "nearest_crupi", "nearest_crupi_dt_h",
-                   "saa_edge_short_passage", "saa_region_proximity"] + [c for c in extra if c in lonely.columns]
+                   "saa_edge_short_passage", "saa_region_proximity", "near_zero_prediction"] + [c for c in extra if c in lonely.columns]
     lonely[lonely_cols].to_csv(out / "events_without_counterpart.csv", index=False)
 
     # ---- sensitivity
@@ -538,14 +542,17 @@ def main() -> None:
          f"{int((ev['match_crupi_known'] | ev['match_crupi_unknown']).sum())} negli eventi abbinati a Crupi)."),
         "",
         md_table(lonely[[c for c in ["trig_ids", "start_times", "duration", "detectors", "sigma_C", "CE", "dist_saa_gap_s",
-                                     "nearest_crupi", "nearest_crupi_dt_h", "saa_edge_short_passage", "saa_region_proximity",
+                                     "nearest_crupi", "nearest_crupi_dt_h", "saa_edge_short_passage", "saa_region_proximity", "near_zero_prediction",
                                      "l", "lat_fermi", "predicted_class"] if c in lonely.columns]]),
         "",
-        "### Flag SAA di post-processing (non cambiano l'elenco degli eventi)",
+        "### Flag di post-processing (non cambiano l'elenco degli eventi)",
         "",
         f"`saa_edge_short_passage`: inizio evento (change point) entro {EDGE_WINDOW_S:.0f} s prima dell'entrata o dopo l'uscita di un "
         f"passaggio SAA il cui buco nei dati è ≤ {SAA_GAP_S:.0f} s, quindi non mascherato. `saa_region_proximity`: Fermi entro "
-        f"{REGION_DEG}° dalla regione con flag SAA nelle POSHIST. Definizioni in `models/saa_flags.py` e `docs/ORBIT_ANALYSIS.md`; "
+        f"{REGION_DEG}° dalla regione con flag SAA nelle POSHIST. `near_zero_prediction`: i bin dell'evento, estesi di {ZERO_PAD_BINS} "
+        f"per lato, toccano un bin con fondo previsto ≤ 0 ({len(rd.zero_rows)} bin in questa run"
+        + (f": eventi {', '.join(str(int(t)) for t in ev.loc[ev['near_zero_prediction'], 'trig_ids'])}" if ev["near_zero_prediction"].any() else "")
+        + "). Definizioni in `models/saa_flags.py` e `docs/ORBIT_ANALYSIS.md`; "
         "per evento in `events_flags.csv`.",
         "",
         md_table(flag_table),
