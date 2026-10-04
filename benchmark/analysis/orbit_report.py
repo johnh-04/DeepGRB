@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 import benchmark.analysis.orbit_analysis as oa
+from benchmark.report import md_table as md
 from benchmark.analysis.orbit_analysis import BANDS, EDGE_WINDOW_S, REGION_DEG, SHORT_PASSAGE_S
 from connections.utils.config import BASE_DIR, DOCS_DIR
 from utils.logs import detail, setup_logging
@@ -27,21 +28,6 @@ R = C = ""  # names of the reference and comparison runs (set in main)
 
 def bundle_name(run: Path) -> str:
     return Path(manifest_model(read_manifest(run)).get("bundle") or "?").name
-
-
-def md(df: pd.DataFrame, fmt: str = ".2f") -> str:
-    cols = list(df.columns)
-    lines = ["| " + " | ".join(map(str, cols)) + " |", "|" + "---|" * len(cols)]
-    for _, r in df.iterrows():
-        cells = []
-        for c in cols:
-            v = r[c]
-            if isinstance(v, (float, np.floating)):
-                cells.append("" if np.isnan(v) else format(v, fmt))
-            else:
-                cells.append(str(v))
-        lines.append("| " + " | ".join(cells) + " |")
-    return "\n".join(lines)
 
 
 def rng(s: pd.Series, fmt: str = ".0f") -> str:
