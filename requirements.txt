@@ -1,52 +1,46 @@
-# DeepGRB Environment Requirements
-# Target Python Version: 3.9.23
+# DeepGRB environment (versions of the ReCaS env deepgrb_recas used for the 2019 baseline)
+# Target Python version: 3.9.23
+# Direct imports of the code: numpy, pandas, scipy, astropy, gbm-data-tools (gbm), tensorflow/keras,
+# scikit-learn, joblib, pyswarms, matplotlib. The other pins are their dependencies.
 
-# Core Scientific & Data Processing
+# Core scientific & data processing
 numpy==1.26.4
 pandas==1.5.3
 scipy==1.13.1
-numba==0.60.0
-llvmlite==0.43.0
 
-# Astronomy & Fermi-GBM Tools
+# Astronomy & Fermi-GBM tools
 astropy==6.0.1
 astropy-iers-data==0.2026.3.16.0.53.33
 pyerfa==2.0.1.5
 healpy==1.17.3
-basemap==1.4.1
-basemap-data==1.3.2
 gbm-data-tools @ https://fermi.gsfc.nasa.gov/ssc/data/analysis/gbm/gbm_data_tools/gbm_data_tools-1.1.1.tar.gz
 pyproj==3.6.1
+basemap==1.4.1        # gbm.plot (sky maps of the localization)
+basemap-data==1.3.2
 pyshp==2.3.1
 
-# Machine Learning & Deep Learning
+# Machine learning
 tensorflow==2.20.0
 keras==3.10.0
-keras-tuner==1.4.8
 scikit-learn==1.6.1
-shap==0.49.1
-pyswarms==1.3.0
 joblib==1.5.3
 threadpoolctl==3.7.0
-cloudpickle==3.1.2
 optree==0.20.0
 ml-dtypes==0.5.4
+pyswarms==1.3.0       # localization (PSO)
 
-# Database & Storage
-sqlalchemy==2.0.54
+# Storage, plots, utilities
 h5py==3.14.0
-
-# Visualization & Reporting
 matplotlib==3.2.1
-seaborn==0.11.2
 pillow==11.3.0
 rich==15.0.0
 tqdm==4.70.1
-
-# Utilities & Networking
 requests==2.32.5
 urllib3==2.6.3
 pyyaml==6.0.3
 python-dateutil==2.9.0.post0
 pytz==2026.3.post1
 typing-extensions==4.16.0
+
+# Not needed: markdown tables are written by benchmark/report.py (md_table), so tabulate is not required.
+# XGBoost phase (docs/WORKING_RULES.md, phase 6; not installed yet): tsfel (light-curve features fe_*), xgboost.
