@@ -17,6 +17,7 @@ import logging
 import platform
 import random
 import shutil
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -30,7 +31,7 @@ from sklearn.metrics import mean_absolute_error as MAE
 from sklearn.metrics import median_absolute_error as MeAE
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from tensorflow.keras.callbacks import EarlyStopping, LearningRateScheduler, ModelCheckpoint
+from tensorflow.keras.callbacks import Callback, EarlyStopping, LearningRateScheduler, ModelCheckpoint
 from tensorflow.keras.layers import BatchNormalization, Dense, Dropout
 from tensorflow.keras.models import load_model
 
@@ -78,6 +79,27 @@ def saa_mask_indices(met: Sequence[float], time_to_del: int, gap_seconds: float 
     for ind in after_gap:
         mask[max(ind - time_to_del, 0):min(ind + time_to_del, len(met))] = True
     return np.where(mask)[0]
+
+
+def report(msg: str = "") -> None:
+    """Training report line on stdout, flushed at once (readable under nohup / python -u)."""
+    print(msg, flush=True)
+
+
+class EpochReport(Callback):
+    """One stdout line per epoch: loss, val_loss, learning rate, elapsed time. Does not affect training."""
+
+    def __init__(self, epochs: int) -> None:
+        super().__init__()
+        self.epochs = epochs
+        self.t0 = time.time()
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        lr = self.model.optimizer.learning_rate
+        lr = float(lr.numpy() if hasattr(lr, "numpy") else lr)
+        report(f"[train] epoch {epoch + 1:3d}/{self.epochs}  loss {logs.get('loss', float('nan')):.4f}  "
+               f"val_loss {logs.get('val_loss', float('nan')):.4f}  lr {lr:.2e}  elapsed {time.time() - self.t0:7.1f} s")
 
 
 def _lr_schedule(base_lr: float):
@@ -157,12 +179,34 @@ class ModelNN:
 
     # --------------------------------------------------------------- training
     def train(self, bundle_dir: Path, seed: int = 0, loss_type: str = "mean", units: int = 2048,
-              epochs: int = 64, lr: float = 0.0008, bs: int = 2048, dropout_rate: float = 0.02) -> Dict:
-        """Trains with the upstream recipe and saves a bundle. Returns the metadata."""
+              epochs: int = 64, lr: float = 0.0008, bs: int = 2048, dropout_rate: float = 0.02,
+              extra_metadata: Optional[Dict] = None) -> Dict:
+        """
+        Trains with the upstream recipe and saves a bundle. Returns the metadata.
+        A readable report (parameters, rows, one line per epoch, per-channel MAE, duration)
+        is printed on stdout; extra_metadata (e.g. git commit, run label) is stored in metadata.json.
+        """
+        t_start = time.time()
+        bundle_dir = Path(bundle_dir)
+        if bundle_dir.exists():
+            raise FileExistsError(f"Refusing to overwrite model bundle {bundle_dir}")
         set_seeds(seed)
         X_train, X_test, y_train, y_test = self._split()
         self.scaler = StandardScaler().fit(X_train)
         X_train_s, X_test_s = self.scaler.transform(X_train), self.scaler.transform(X_test)
+
+        # Keras validation_split takes the last 30% of the training arrays, without shuffling
+        n_fit = int(len(X_train) * (1 - 0.3))
+        report("=" * 70)
+        report(f"[train] bundle      : {bundle_dir}")
+        report(f"[train] period      : {self.start_date} -> {self.end_date}")
+        report(f"[train] seed        : {seed}  (split seed {SPLIT_SEED})")
+        report(f"[train] parameters  : loss={loss_type} units={units} epochs={epochs} lr={lr} batch={bs} "
+               f"dropout={dropout_rate} validation_split=0.3 early_stopping(min_delta=0.01, patience=32)")
+        report(f"[train] rows        : pool {len(X_train) + len(X_test)} = fit {n_fit} + validation "
+               f"{len(X_train) - n_fit} + test {len(X_test)}  (features {X_train.shape[1]}, targets {y_train.shape[1]})")
+        report(f"[train] devices     : {[d.name for d in tf.config.list_physical_devices('GPU')] or 'CPU only'}")
+        report("=" * 70)
 
         inputs = tf.keras.Input(shape=(X_train.shape[1],))
         x = inputs
@@ -176,18 +220,32 @@ class ModelNN:
         loss = {"max": loss_max, "median": loss_median}.get(loss_type, "mae")
         model.compile(loss=loss, optimizer=tf.keras.optimizers.Nadam(learning_rate=lr, beta_1=0.9, beta_2=0.99, epsilon=1e-07))
 
-        bundle_dir = Path(bundle_dir)
         bundle_dir.mkdir(parents=True, exist_ok=False)
         checkpoint = bundle_dir / "best_checkpoint.keras"
-        model.fit(
-            X_train_s, y_train, epochs=epochs, batch_size=bs, validation_split=0.3, verbose=2,
+        t_fit = time.time()
+        history = model.fit(
+            X_train_s, y_train, epochs=epochs, batch_size=bs, validation_split=0.3, verbose=0,
             callbacks=[
                 EarlyStopping(monitor="val_loss", mode="min", min_delta=0.01, patience=32),
                 ModelCheckpoint(str(checkpoint), monitor="val_loss", mode="min", save_best_only=True),
                 LearningRateScheduler(_lr_schedule(lr)),
+                EpochReport(epochs),
             ],
         )
+        fit_seconds = time.time() - t_fit
         self.nn_r = load_model(str(checkpoint), compile=False, custom_objects={"loss_median": loss_median, "loss_max": loss_max})
+
+        metrics = self._channel_metrics(X_train_s, y_train, X_test_s, y_test)
+        val_loss = history.history.get("val_loss", [])
+        best_epoch = int(np.argmin(val_loss)) + 1 if val_loss else None
+        report("-" * 70)
+        report(f"[train] epochs run {len(history.history.get('loss', []))}/{epochs}; best val_loss "
+               f"{min(val_loss):.4f} at epoch {best_epoch}" if val_loss else "[train] no validation loss recorded")
+        report("[train] per-channel MAE (best checkpoint)       train      test   MeAE test")
+        for ch, m in metrics.items():
+            report(f"[train]   {ch:<38s} {m['mae_train']:9.3f} {m['mae_test']:9.3f} {m['meae_test']:9.3f}")
+        report(f"[train]   {'mean over channels':<38s} {np.mean([m['mae_train'] for m in metrics.values()]):9.3f} "
+               f"{np.mean([m['mae_test'] for m in metrics.values()]):9.3f}")
 
         self.metadata = {
             "source": "trained",
@@ -195,10 +253,21 @@ class ModelNN:
             "hyperparameters": {"loss_type": loss_type, "units": units, "epochs": epochs, "lr": lr,
                                 "batch_size": bs, "dropout": dropout_rate, "validation_split": 0.3,
                                 "early_stopping": {"min_delta": 0.01, "patience": 32}, "split_seed": SPLIT_SEED},
-            "metrics": self._channel_metrics(X_train_s, y_train, X_test_s, y_test),
+            "rows": {"fit": n_fit, "validation": len(X_train) - n_fit, "test": len(X_test)},
+            "epochs_run": len(history.history.get("loss", [])),
+            "best_epoch": best_epoch,
+            "history": {k: [float(v) for v in vals] for k, vals in history.history.items() if k in ("loss", "val_loss")},
+            "metrics": metrics,
+            "devices": [d.name for d in tf.config.list_physical_devices("GPU")] or ["CPU"],
+            "training_seconds": round(fit_seconds, 1),
+            "total_seconds": round(time.time() - t_start, 1),
         }
+        self.metadata.update(dict(extra_metadata or {}))
         self.save_bundle(bundle_dir, model_file="model.keras")
         checkpoint.unlink(missing_ok=True)
+        report(f"[train] fit time {fit_seconds / 60:.1f} min; total (incl. metrics and saving) "
+               f"{(time.time() - t_start) / 60:.1f} min; bundle {bundle_dir}")
+        report("=" * 70)
         return self.metadata
 
     def _channel_metrics(self, X_train_s, y_train, X_test_s, y_test) -> Dict[str, Dict[str, float]]:
