@@ -3,6 +3,15 @@
 > Documento operativo: regole di lavoro del progetto. Leggilo tutto prima di toccare il codice.
 > Autore: Giovanni Pio Martello (Poliba, tesi su DeepGRB, cluster ReCaS). Scrivi in italiano con me; codice, commit e nomi di variabili in inglese.
 
+## Stato dopo il consolidamento (2026-10-04)
+
+Le fasi 0–5 sono chiuse (tag `baseline-2019-validated`); il codice è stato poi consolidato (`docs/REFACTOR_REPORT.md`). I riferimenti a file più sotto descrivono il lavoro come è stato fatto; i nomi attuali sono:
+
+- **entry point unico** `pipeline/pipeline_bkg.py`, 9 step (download, preprocess, rete, FOCuS, eventi, localizzazione + classificazione, flag, validazione, resoconto); periodo ed etichetta nel blocco **USER SETTINGS** in cima al file, le variabili `DEEPGRB_*` hanno priorità. `connections/utils/config.py` non contiene più date: contiene cartelle, versione del motore e tutti i parametri scientifici;
+- validazione: `benchmark/validate.py` scrive `<run>/validation/` (CSV + `summary.json`), `benchmark/report.py` scrive `<run>/RESULTS.md` e `docs/RUNS.md` (prima: `benchmark/out/REPORT.md`); classificazione: `models.event_classifier.classify_events` (prima `benchmark/classify.py`); flag: `models/flags.py` (prima `models/saa_flags.py`);
+- `docs/BASELINE.md` e `docs/PROJECT_MAP.md` sono confluiti in `README.md`, `docs/BASELINE_2019.md` e `docs/REFACTOR_REPORT.md`;
+- regole invariate: nessun numero scritto a mano, nessun parametro tarato, nessun dato cancellato, training solo su richiesta, commit atomici, test per ogni correzione.
+
 ## 0. Obiettivo
 
 Far sì che `pipeline/pipeline_bkg.py` **riproduca, in modo verificabile e privo di errori logici**, i risultati del paper di Crupi et al. (Exp. Astron. 56:421, 2023; tesi arXiv:2401.15632) sul periodo **1 marzo – 30 giugno 2019** (il paper arriva al 9 luglio; per decisione del 2026-10-03 la baseline si ferma al 30 giugno, vedi §3):
