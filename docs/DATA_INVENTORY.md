@@ -10,7 +10,7 @@ Finestra: 2019-03-01 → 2019-06-30 (inclusiva), 122 giorni. Generato da `python
 | CSPEC NaI completi (12/12) | 122 / 122 |
 | POSHIST presente | 122 / 122 |
 | Tabella preprocessata `data/bkg/YYMMDD.csv` | 122 / 122 |
-| Presente in `pred/frg_03-2019_07-2019.csv` | 122 / 122 |
+| Presente in `pred/frg.csv` della run `engine-v3-seed1` | 122 / 122 |
 
 ## Buchi
 
