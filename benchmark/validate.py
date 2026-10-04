@@ -25,9 +25,9 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
-from benchmark.matching import BINLENGTH, PRIMARY_MARGIN, match_one_to_one
+from benchmark.matching import BINLENGTH, PRIMARY_MARGIN, match_one_to_one, overlap_one_to_one
 from connections.utils.config import BASE_DIR, DATA_DIR, END_DATE, FOLD_POSHIST, GBM_BURST_DB, GBM_TRIG_DB, START_DATE, run_dir
-from models.saa_flags import EDGE_WINDOW_S, REGION_DEG, SAA_GAP_S, PoshistTrack, compute_saa_flags
+from models.saa_flags import EDGE_WINDOW_S, REGION_DEG, SAA_GAP_S, PoshistTrack, compute_saa_flags, unmasked_passages
 from utils.fermi_time import utc_to_met
 from utils.keys import get_keys
 from utils.period import days_with_data, in_window, window_days
@@ -222,6 +222,36 @@ def md_table(df: pd.DataFrame, floatfmt: str = ".2f") -> str:
     return "\n".join(lines)
 
 
+def run_model_bundle(run: Path) -> str:
+    """Bundle that produced the run's predictions (the source run's one when pred/ is reused)."""
+    man = json.loads((run / "manifest.json").read_text()) if (run / "manifest.json").exists() else {}
+    reused = man.get("reused_from") or {}
+    return reused.get("model_bundle") or man.get("parameters", {}).get("model_bundle") or "?"
+
+
+def model_description(bundle: str) -> str:
+    """Seed and origin of a model bundle, from its metadata.json."""
+    meta_path = BASE_DIR / bundle / "metadata.json"
+    if not meta_path.exists():
+        return "metadati del bundle non trovati"
+    meta = json.loads(meta_path.read_text())
+    if "seed" in meta:
+        return f"seed di training {meta['seed']} (da `metadata.json` del bundle)"
+    if meta.get("source") == "legacy_h5":
+        return "modello legacy addestrato il 2026-09-21 da codice equivalente a upstream: seed non registrato"
+    return "seed non presente nei metadati del bundle"
+
+
+def sibling_runs(run: Path) -> pd.DataFrame:
+    """Runs of the same period with an event table: name, model bundle, number of events."""
+    rows = []
+    for d in sorted(run.parent.iterdir()):
+        ev = d / "results" / "events_table.csv"
+        if d.is_dir() and ev.exists():
+            rows.append({"run": d.name, "bundle": run_model_bundle(d), "events": len(pd.read_csv(ev))})
+    return pd.DataFrame(rows)
+
+
 def git_commit() -> str:
     try:
         return subprocess.run(["git", "rev-parse", "HEAD"], cwd=BASE_DIR, capture_output=True, text=True).stdout.strip()
@@ -359,7 +389,8 @@ def main() -> None:
     # ---- post-processing SAA flags (columns only: the event list does not change)
     days = window_days((pd.Timestamp(START_DATE) - pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
                        (pd.Timestamp(END_DATE) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"))
-    flags = compute_saa_flags(ev["t_start"].to_numpy(), PoshistTrack.for_days(DATA_DIR / FOLD_POSHIST, days), rd.met)
+    track = PoshistTrack.for_days(DATA_DIR / FOLD_POSHIST, days)
+    flags = compute_saa_flags(ev["t_start"].to_numpy(), track, rd.met)
     flags.index = ev.index
     ev = pd.concat([ev, flags], axis=1)
     ev[["trig_ids", "start_times", "duration", "detectors", "sigma_C", "CE", "counterpart", "match_gbm",
@@ -440,9 +471,31 @@ def main() -> None:
         ("Inediti complessivi ≥ 70% (≥ 17/24)", recall_line(unknown), unknown["matched"].mean() >= 0.7),
         ("Recall GRB T90 > 4.096 s ~ 88%", f"{s['long_detected']}/{s['long_available']}", None),
         ("Recall GRB T90 ≤ 4.096 s ~ 34%", f"{s['short_detected']}/{s['short_available']}", None),
-        ("Numero eventi ~ 100 ± qualche decina", str(len(ev)), 60 <= len(ev) <= 140),
     ]
     acc_df = pd.DataFrame([{"criterio": a, "misurato": b, "esito": "n/a (ordine di grandezza)" if c is None else ("OK" if c else "NON RAGGIUNTO")} for a, b, c in acc])
+    siblings = sibling_runs(args.run)
+    by_net = siblings.groupby("bundle")["events"].agg(lambda x: "/".join(str(v) for v in sorted(set(x))))
+    net_counts = "; ".join(f"`{Path(b).name}`: {n}" for b, n in by_net.items())
+    acc_df = pd.concat([acc_df, pd.DataFrame([{
+        "criterio": "Numero eventi (paper: ~100 fino al 9 luglio)",
+        "misurato": f"{len(ev)} (per rete, run di questo periodo: {net_counts})",
+        "esito": "informativo: dipende dalla rete"}])], ignore_index=True)
+
+    # ---- limits computed from data
+    this_bundle = run_model_bundle(args.run)
+    stab = []
+    for bundle, grp in siblings[siblings["bundle"] != this_bundle].groupby("bundle"):
+        other = grp.iloc[0]["run"]
+        oe = pd.read_csv(args.run.parent / other / "results" / "events_table.csv")
+        pairs = overlap_one_to_one(rd.events["start_met"], rd.events["duration"], oe["start_met"], oe["duration"])
+        stab.append(f"con la rete `{Path(bundle).name}` (run `{other}`, {len(oe)} eventi): {len(pairs)} coppie, "
+                    f"{len(rd.events) - len(pairs)} eventi solo qui, {len(oe) - len(pairs)} solo là")
+    n_short = len(unmasked_passages(track.passages(), rd.met))
+    lone_flags = ev[~ev["counterpart"]]
+    zero = (json.loads((args.run / "manifest.json").read_text()).get("predicted_zero_cells")
+            if (args.run / "manifest.json").exists() else None)
+    zero_txt = (f"{zero['cells']} celle ({zero['bins_any_channel']} bin) con fondo previsto ≤ 0 in questa run"
+                if zero else "conteggio non registrato nel manifest di questa run")
 
     # ---- report
     unm_cols = ["id", "trigger_time_utc", "detectors", "catalog_name", "S_r1", "CE", "has_data", "focus_r1_max_pm60s", "nearest_event_dt_s", "diagnosis"]
@@ -458,7 +511,9 @@ def main() -> None:
         f"- Periodo: {START_DATE} → {END_DATE} (inclusivo); giorni con dati: {len(rd.data_days)}.",
         f"- Run: `{args.run.relative_to(BASE_DIR)}`; motore prodotto dal commit `{last_run.get('git_commit', '?')}` (codice modificato: {last_run.get('code_dirty', '?')}).",
         f"- Validazione eseguita dal commit `{git_commit()}`; Python {platform.python_version()}, pandas {pd.__version__}, numpy {np.__version__}.",
-        f"- Modello: `{man.get('parameters', {}).get('model_bundle', '?')}`; seed di training {man.get('parameters', {}).get('train_seed', '?')} (modello legacy: addestrato una volta, seed non registrato).",
+        f"- Modello: `{this_bundle}`; {model_description(this_bundle)}."
+        + (f" Predizioni e trigger riusati da `{man['reused_from']['run']}` (engine v{man['reused_from']['engine_version']}, {man['reused_from']['how']})."
+           if man.get("reused_from") else ""),
         f"- Parametri del motore: soglia {man.get('parameters', {}).get('trigger', {}).get('threshold_sigma')} σ in r1, mu_min {man.get('parameters', {}).get('focus', {}).get('mu_min')}, t_max {man.get('parameters', {}).get('focus', {}).get('t_max_bins')} bin, esclusione SAA ±{man.get('parameters', {}).get('saa_exclusion_bins_each_side')} bin, merge {man.get('parameters', {}).get('merge_s')} s.",
         f"- Matching: uno-a-uno; un riferimento è abbinato se il suo istante cade in [inizio evento − {PRIMARY_MARGIN:.3f} s, fine evento + {PRIMARY_MARGIN:.3f} s]; l'inizio evento è il change point FOCuS (`start_times_offset`).",
         "",
@@ -545,7 +600,17 @@ def main() -> None:
         "",
         "## Limiti noti",
         "",
-        "- Stabilità rispetto al seed di training non misurata (richiede un nuovo training: da confermare).",
+        "- Stabilità rispetto alla rete (stesso codice, addestramento diverso): "
+        + ("; ".join(stab) if stab else "nessuna altra run dello stesso periodo con una rete diversa") + ". "
+        "Gli eventi forti e quelli abbinati a Crupi/GBM sono stabili; cambiano soprattutto quelli senza controparte (vedi `docs/ORBIT_ANALYSIS.md`).",
+        f"- Passaggi SAA brevi non mascherati: {n_short} passaggi nel periodo hanno un buco nei dati ≤ {SAA_GAP_S:.0f} s, quindi non coperto dalla "
+        f"maschera (che agisce solo sui buchi > {SAA_GAP_S:.0f} s); la rete sottostima il fondo nell'avvicinamento. "
+        f"Eventi con `saa_edge_short_passage` in questa run: {int(ev['saa_edge_short_passage'].sum())} "
+        f"({int(lone_flags['saa_edge_short_passage'].sum())} senza controparte; gruppo A di ORBIT_ANALYSIS).",
+        f"- Bordo settentrionale della SAA: eventi senza controparte entro {REGION_DEG}° dalla regione SAA ma non al bordo di un passaggio breve: "
+        f"{int((lone_flags['saa_region_proximity'] & ~lone_flags['saa_edge_short_passage']).sum())} (comprende il gruppo B di ORBIT_ANALYSIS).",
+        f"- Fondo previsto ≤ 0: {zero_txt}. Da engine v3 quei bin sono esclusi dal calcolo di S, ma il trigger che parte accanto resta; "
+        "eventi adiacenti a questi bin vanno considerati sospetti.",
         "- Classificatore: mancano la regola FP e le feature `fe_*` (tsfel, branch upstream `ric_review_28062023`): i termini che le usano sono neutri.",
         "- Il paper conta fino al 9 luglio; i numeri del paper sono confronti di ordine di grandezza.",
         "",
