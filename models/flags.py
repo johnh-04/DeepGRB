@@ -1,20 +1,20 @@
 """
-Post-processing flags (docs/ORBIT_ANALYSIS.md). They add columns to an event table and never
-change the list of events:
+Post-processing flags (step 7; docs/ORBIT_ANALYSIS.md). They add columns to an event table and
+never change the list of events:
 
-- saa_edge_short_passage: the event start (FOCuS change point) lies within EDGE_WINDOW_S before
-  the entry or after the exit of an SAA passage whose data gap is not masked, i.e. the gap in the
-  frg timeline around the passage is <= SAA_GAP_S (the masking rule of ModelNN.predict only acts
-  on gaps > SAA_GAP_S).
-- saa_region_proximity: Fermi's position at the event start is within REGION_DEG of the ground
+- saa_edge_short_passage: the event start (FOCuS change point) lies within FLAG_EDGE_WINDOW_S
+  before the entry or after the exit of an SAA passage whose data gap is not masked, i.e. the gap
+  in the frg timeline around the passage is <= SAA_GAP_S (the masking rule of ModelNN.predict only
+  acts on gaps > SAA_GAP_S).
+- saa_region_proximity: Fermi's position at the event start is within FLAG_REGION_DEG of the ground
   region where the POSHIST SAA flag is set.
-
-- near_zero_prediction: the event bins [start_index, end_index - 1], extended by ZERO_PAD_BINS on
-  each side, include a bin where the predicted background is <= 0 on some channel (network
+- near_zero_prediction: the event bins [start_index, end_index - 1], extended by FLAG_ZERO_PAD_BINS
+  on each side, include a bin where the predicted background is <= 0 on some channel (network
   output clipped to zero; such bins are ignored by FOCuS and by S, but the neighbours can be
   under-predicted too).
 
 SAA passages and the SAA region come from the POSHIST FLAGS (bit value 2), positions from SC_LAT/SC_LON.
+Thresholds: connections/utils/config.py.
 """
 
 from pathlib import Path
@@ -24,11 +24,16 @@ import numpy as np
 import pandas as pd
 from astropy.io import fits
 
-SAA_GAP_S = 500.0       # same threshold as the SAA masking of the background step
-EDGE_WINDOW_S = 200.0
-REGION_DEG = 3.5
-REGION_GRID_DEG = 0.1   # SAA region sampled on a 0.1 deg grid of flagged positions
-ZERO_PAD_BINS = 5
+from connections.utils.config import (FLAG_EDGE_WINDOW_S, FLAG_REGION_DEG, FLAG_REGION_GRID_DEG, FLAG_ZERO_PAD_BINS,
+                                      SAA_GAP_S)
+from utils.keys import get_keys
+from utils.period import window_days
+
+EDGE_WINDOW_S = FLAG_EDGE_WINDOW_S
+REGION_DEG = FLAG_REGION_DEG
+REGION_GRID_DEG = FLAG_REGION_GRID_DEG   # SAA region sampled on a grid of flagged positions
+ZERO_PAD_BINS = FLAG_ZERO_PAD_BINS
+FLAG_COLUMNS = ["saa_edge_short_passage", "saa_region_proximity", "near_zero_prediction"]
 
 
 class PoshistTrack:
@@ -143,3 +148,33 @@ def near_zero_prediction_flag(start_index: Sequence[int], end_index: Sequence[in
     lo = np.asarray(start_index, dtype=int) - pad
     hi = np.asarray(end_index, dtype=int) - 1 + pad
     return np.searchsorted(z, hi, side="right") > np.searchsorted(z, lo, side="left")
+
+
+def event_start_met(events: pd.DataFrame, met: np.ndarray, timestamp: pd.Series) -> pd.Series:
+    """
+    MET of the event start (FOCuS change point, column start_times_offset). Timestamps repeated at
+    day boundaries (overlapping CSPEC files) map to their first occurrence; start_met is the fallback.
+    """
+    ts_to_met = pd.Series(np.asarray(met, dtype=float), index=pd.Series(timestamp).values)
+    ts_to_met = ts_to_met[~ts_to_met.index.duplicated(keep="first")]
+    return events["start_times_offset"].map(ts_to_met).fillna(events["start_met"])
+
+
+def flag_events(run: Path, poshist_dir: Path, start_date: str, end_date: str) -> pd.DataFrame:
+    """Flags of every event of a run (trig_ids + flag columns + the quantities behind them)."""
+    run = Path(run)
+    frg = pd.read_csv(run / "pred" / "frg.csv", usecols=["met", "timestamp"])
+    bkg = pd.read_csv(run / "pred" / "bkg.csv", usecols=get_keys()).to_numpy(dtype=float)
+    events = pd.read_csv(run / "results" / "events_table.csv")
+    met = frg["met"].to_numpy(dtype=float)
+    t_start = event_start_met(events, met, frg["timestamp"])
+    # POSHIST of the period plus one day on each side (passages across midnight)
+    days = window_days((pd.Timestamp(start_date) - pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+                       (pd.Timestamp(end_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"))
+    track = PoshistTrack.for_days(poshist_dir, days)
+    flags = compute_saa_flags(t_start.to_numpy(), track, met)
+    flags["near_zero_prediction"] = near_zero_prediction_flag(events["start_index"], events["end_index"],
+                                                              zero_prediction_rows(bkg))
+    flags.insert(0, "trig_ids", events["trig_ids"].to_numpy())
+    flags.insert(1, "t_start_met", t_start.to_numpy())
+    return flags

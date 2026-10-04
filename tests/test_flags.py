@@ -1,10 +1,11 @@
-"""Post-processing SAA flags (models/saa_flags.py)."""
+"""Post-processing SAA flags (models/flags.py)."""
 
 import unittest
 
 import numpy as np
+import pandas as pd
 
-from models.saa_flags import (EDGE_WINDOW_S, PoshistTrack, compute_saa_flags, near_zero_prediction_flag, saa_passages,
+from models.flags import (event_start_met, EDGE_WINDOW_S, PoshistTrack, compute_saa_flags, near_zero_prediction_flag, saa_passages,
                               unmasked_passages, zero_prediction_rows)
 
 
@@ -61,6 +62,14 @@ class TestNearZeroPrediction(unittest.TestCase):
 
     def test_no_zero_rows(self):
         self.assertFalse(near_zero_prediction_flag([5], [8], np.array([], dtype=int)).any())
+
+
+class TestEventStart(unittest.TestCase):
+    def test_change_point_time_uses_first_occurrence_of_a_timestamp(self):
+        met = np.array([10.0, 14.096, 14.5, 18.6])
+        ts = pd.Series(["t0", "t1", "t1", "t2"])  # t1 repeated at a day boundary
+        ev = pd.DataFrame({"start_times_offset": ["t1", "t2", "tx"], "start_met": [1.0, 2.0, 3.0]})
+        self.assertEqual(event_start_met(ev, met, ts).tolist(), [14.096, 18.6, 3.0])  # unknown -> start_met
 
 
 if __name__ == "__main__":
