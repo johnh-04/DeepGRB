@@ -1,46 +1,56 @@
 """
-Read-only diagnosis of the bins where a network predicts a background <= 0 (engine-v2-seed1).
+Read-only diagnosis of the bins where the network of a run predicts a background <= 0.
 
 For every such bin and its 5 neighbours on each side:
   - the 60 network inputs (raw and standardised with the bundle's scaler), NaN check,
     percentile rank of each input in the whole period, jump from the previous bin
     compared with the typical bin-to-bin change of that input;
-  - the network output, the pre-activation of the final ReLU layer and the legacy
-    network's prediction on the same bins (engine-v2);
+  - the network output, the pre-activation of the final ReLU layer and the prediction of the
+    comparison run's network on the same bins;
   - sensitivity: each input of a zero bin is replaced by the mean of its non-zero
     neighbours; the inputs whose replacement makes the output positive are listed.
 
-Outputs in benchmark/analysis/out/: zero_prediction_bins.csv, zero_prediction_inputs.csv,
-zero_prediction_sensitivity.csv, zero_prediction_summary.json.
-Usage (repo root): python -m benchmark.analysis.zero_prediction
+Outputs in <run>/analysis/: zero_prediction_bins.csv, zero_prediction_inputs.csv,
+zero_prediction_sensitivity.csv, zero_prediction_summary.json (read by orbit_report.py).
+Usage (repo root): python -m benchmark.analysis.zero_prediction --run <run> --compare <comparison run>
 """
 
+import argparse
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 
-from benchmark.analysis.orbit_analysis import OUT, RUNS
-from connections.utils.config import BASE_DIR, END_DATE, START_DATE
+import benchmark.analysis.orbit_analysis as oa
+from connections.utils.config import BASE_DIR
 from models.model_nn import ModelNN
 from utils.keys import get_keys
+from utils.logs import detail, setup_logging
+from utils.run_options import manifest_model, read_manifest
 
-BUNDLE = BASE_DIR / "data" / "nn_model" / "bundles" / "model_2019-03-01_2019-06-30_seed1"
 NEIGHBOURS = 5
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    oa.add_cli(parser)
+    args = parser.parse_args()
+    setup_logging()
+    oa.configure(args.run, args.compare)
+    OUT, RUNS = oa.OUT, oa.RUNS
+    bundle = BASE_DIR / manifest_model(read_manifest(RUNS["ref"]["run"]))["bundle"]
     OUT.mkdir(parents=True, exist_ok=True)
     keys = get_keys()
-    bkg_seed1 = pd.read_csv(RUNS["seed1"]["run"] / "pred" / "bkg.csv", usecols=keys)
-    bkg_legacy = pd.read_csv(RUNS["v2"]["run"] / "pred" / "bkg.csv", usecols=keys)
-    frg = pd.read_csv(RUNS["seed1"]["run"] / "pred" / "frg.csv", usecols=["met", "timestamp"])
-    zero_rows = np.where((bkg_seed1.to_numpy() <= 0).any(axis=1))[0]
+    bkg_ref = pd.read_csv(RUNS["ref"]["run"] / "pred" / "bkg.csv", usecols=keys)
+    bkg_cmp = pd.read_csv(RUNS["cmp"]["run"] / "pred" / "bkg.csv", usecols=keys)
+    frg = pd.read_csv(RUNS["ref"]["run"] / "pred" / "frg.csv", usecols=["met", "timestamp"])
+    zero_rows = np.where((bkg_ref.to_numpy() <= 0).any(axis=1))[0]
 
-    nn = ModelNN(START_DATE, END_DATE)
+    nn = ModelNN(oa.START_DATE, oa.END_DATE)
     nn.prepare(bool_del_trig=True)
-    nn.load_bundle(BUNDLE)
+    nn.load_bundle(bundle)
     feats = nn.col_selected
     X_raw = nn.df_data[feats].astype("float32")
     assert np.allclose(nn.df_data["met"].to_numpy(), frg["met"].to_numpy()), "row alignment with pred/ failed"
@@ -76,9 +86,9 @@ def main() -> None:
             "max_abs_z": float(np.nanmax(np.abs(z))), "feature_max_abs_z": feats[int(np.nanargmax(np.abs(z)))],
             "max_jump_over_p999": float(np.nanmax(jump)) if np.isfinite(jump).any() else np.nan,
             "feature_max_jump": feats[int(np.nanargmax(jump))] if np.isfinite(jump).any() else "",
-            "seed1_pred_sum_r1": float(bkg_seed1.loc[r, [c for c in keys if c.endswith("_r1")]].sum()),
-            "seed1_channels_le0": int((bkg_seed1.loc[r] <= 0).sum()),
-            "legacy_pred_sum_r1": float(bkg_legacy.loc[r, [c for c in keys if c.endswith("_r1")]].sum()),
+            "ref_pred_sum_r1": float(bkg_ref.loc[r, [c for c in keys if c.endswith("_r1")]].sum()),
+            "ref_channels_le0": int((bkg_ref.loc[r] <= 0).sum()),
+            "cmp_pred_sum_r1": float(bkg_cmp.loc[r, [c for c in keys if c.endswith("_r1")]].sum()),
             "network_out_sum": float(out[k].sum()), "preact_max": float(pre[k].max()), "preact_median": float(np.median(pre[k])),
             "penultimate_mean_abs": float(np.mean(np.abs(h[k]))),
         })
@@ -119,19 +129,18 @@ def main() -> None:
     restoring = sens[sens["out_sum_after_replacing"] > 0].groupby("feature")["row"].nunique().sort_values(ascending=False)
     summary = {
         "zero_rows": [int(r) for r in zero_rows], "zero_timestamps": zb["timestamp"].tolist(),
-        "cells": int((bkg_seed1.to_numpy() <= 0).sum()),
+        "cells": int((bkg_ref.to_numpy() <= 0).sum()),
         "nan_inputs_in_zero_bins": int(zb["n_nan_inputs"].sum()),
         "max_abs_z_zero_bins": float(zb["max_abs_z"].max()), "max_abs_z_neighbours": float(nz["max_abs_z"].max()),
         "max_jump_over_p999_zero_bins": float(zb["max_jump_over_p999"].max()),
         "max_jump_over_p999_neighbours": float(nz["max_jump_over_p999"].max()),
         "preact_max_zero_bins": float(zb["preact_max"].max()), "preact_max_neighbours_min": float(nz["preact_max"].min()),
-        "legacy_pred_sum_r1_zero_bins": [float(v) for v in zb["legacy_pred_sum_r1"]],
+        "cmp_pred_sum_r1_zero_bins": [float(v) for v in zb["cmp_pred_sum_r1"]],
         "features_restoring_output": {f: int(n) for f, n in restoring.items()},
         "neighbour_mean_input_output_positive": bool((sens.groupby("row")["out_sum_all_inputs_from_neighbours"].first() > 0).all()),
     }
     (OUT / "zero_prediction_summary.json").write_text(json.dumps(summary, indent=2))
-    print(json.dumps(summary, indent=2))
-    print(bins.to_string(index=False))
+    detail(f"written {OUT}: {len(zero_rows)} zero-prediction bins, {summary['cells']} cells")
 
 
 if __name__ == "__main__":

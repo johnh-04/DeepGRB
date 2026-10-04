@@ -1,7 +1,8 @@
 """
 Population analysis of the 2019 baseline events (read-only on engine outputs).
 
-For the runs engine-v2 (legacy network) and engine-v2-seed1 (retrained, seed 1):
+For two runs of the same period, a reference (--run) and a comparison (--compare), e.g. the
+2019 baseline engine-v2-seed1 (retrained network) and engine-v2 (legacy network):
   - groups: events matched to Crupi/GBM, and events without counterpart split by
     dist_saa_gap_s into A, B (bands below) and 'other';
   - one-to-one overlap of the two runs' events;
@@ -12,10 +13,12 @@ For the runs engine-v2 (legacy network) and engine-v2-seed1 (retrained, seed 1):
   - the same quantities for random valid times (null distribution);
   - KS tests, lat/lon map, table of the 'other' events with GBM catalog entries within 1 h.
 
-Outputs: benchmark/analysis/out/*.csv, *.png, summary.json (consumed by orbit_report.py).
-Usage (repo root): python -m benchmark.analysis.orbit_analysis
+Inputs: pred/, trig/, results/ and validation/ of both runs (pipeline steps 3-8).
+Outputs: <reference run>/analysis/*.csv, *.png, summary.json (consumed by orbit_report.py).
+Usage (repo root): python -m benchmark.analysis.orbit_analysis --run <reference run> --compare <comparison run>
 """
 
+import argparse
 import json
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -30,19 +33,36 @@ from gbm.data import PosHist
 from scipy import stats
 
 from benchmark.matching import overlap_one_to_one as _overlap
-from connections.utils.config import BASE_DIR, DATA_DIR, END_DATE, FOLD_POSHIST, GBM_TRIG_DB, START_DATE
+from connections.utils.config import DATA_DIR, FOLD_POSHIST, GBM_TRIG_DB, run_period
+from utils.logs import detail, setup_logging
 from utils.period import window_days
 
-RUNS_ROOT = DATA_DIR / "runs" / f"{START_DATE}_{END_DATE}"
-RUNS = {
-    "v2": {"run": RUNS_ROOT / "engine-v2", "val": BASE_DIR / "benchmark" / "out"},
-    "seed1": {"run": RUNS_ROOT / "engine-v2-seed1", "val": BASE_DIR / "benchmark" / "out" / "seed1"},
-}
-OUT = BASE_DIR / "benchmark" / "analysis" / "out"
+# set by configure(): the two runs ("ref" = reference, "cmp" = comparison), their period and the output folder
+RUNS: Dict[str, Dict[str, Path]] = {}
+OUT = Path()
+START_DATE = END_DATE = ""
+
+
+def configure(reference: Path, comparison: Path) -> None:
+    """Points the module at two runs of the same period; outputs go to <reference>/analysis/."""
+    global OUT, START_DATE, END_DATE
+    reference, comparison = Path(reference).resolve(), Path(comparison).resolve()
+    START_DATE, END_DATE = run_period(reference)
+    if run_period(comparison) != (START_DATE, END_DATE):
+        raise ValueError(f"{comparison.name} and {reference.name} cover different periods")
+    RUNS.clear()
+    RUNS.update({"cmp": {"run": comparison, "val": comparison / "validation"},
+                 "ref": {"run": reference, "val": reference / "validation"}})
+    OUT = reference / "analysis"
+
+
+def add_cli(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--run", type=Path, required=True, help="reference run folder (e.g. the retrained network)")
+    parser.add_argument("--compare", type=Path, required=True, help="comparison run folder of the same period")
 BIN = 4.096
 GAP_S = 500.0
-# Bands of dist_saa_gap_s (s). They contain the two clusters observed in seed1
-# (5091-5218 s, 5804-5837 s) with margins; the nearest seed1 values outside are 4981 s and 7000 s.
+# Bands of dist_saa_gap_s (s). They contain the two clusters observed in the 2019 baseline run with the
+# retrained network (5091-5218 s, 5804-5837 s) with margins; the nearest values outside are 4981 s and 7000 s.
 BANDS = {"A": (5050.0, 5300.0), "B": (5750.0, 5900.0)}
 N_NULL = 5000
 NULL_SEED = 12345
@@ -288,6 +308,11 @@ def residual_by_zone(orbit: "Orbit", name: str, grid: np.ndarray) -> pd.DataFram
 
 # ----------------------------------------------------------------------------- main
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    add_cli(parser)
+    args = parser.parse_args()
+    setup_logging()
+    configure(args.run, args.compare)
     OUT.mkdir(parents=True, exist_ok=True)
     orbit = Orbit()
     summary = {"orbital_period_s": orbit.period, "n_saa_passages": int(len(orbit.saa)), "bands": BANDS,
@@ -316,9 +341,9 @@ def main() -> None:
     days_null = [pd.Timestamp("2001-01-01") + pd.Timedelta(seconds=float(t)) for t in t_null]
     days_null = [d.strftime("%y%m%d") for d in days_null]  # MET->UTC within a few s: day only
     null = orbit.describe(t_null, days_null)
-    v2 = events["v2"]
+    v2 = events["cmp"]
     g0 = v2  # gaps identical across runs (same data rows)
-    frg_met = pd.read_csv(RUNS["v2"]["run"] / "pred" / "frg.csv", usecols=["met"])["met"].to_numpy(dtype=float)
+    frg_met = pd.read_csv(RUNS["cmp"]["run"] / "pred" / "frg.csv", usecols=["met"])["met"].to_numpy(dtype=float)
     gs, ge = data_gaps(frg_met)
     null["t_since_gap_end_s"] = [t - ge[ge <= t].max() if (ge <= t).any() else np.nan for t in t_null]
     null["t_to_gap_start_s"] = [gs[gs >= t].min() - t if (gs >= t).any() else np.nan for t in t_null]
@@ -375,26 +400,26 @@ def main() -> None:
             summary["runs"][name]["matched_n"] = int(len(mk))
 
     # Overlap between runs
-    a, b = events["v2"], events["seed1"]
+    a, b = events["cmp"], events["ref"]
     pairs = overlap_one_to_one(a, b)
     pa = {i: j for i, j, _ in pairs}
     pb = {j: i for i, j, _ in pairs}
-    a["pair_seed1"] = [b["trig_ids"].iat[pa[i]] if i in pa else -1 for i in range(len(a))]
-    b["pair_v2"] = [a["trig_ids"].iat[pb[j]] if j in pb else -1 for j in range(len(b))]
+    a["pair_ref"] = [b["trig_ids"].iat[pa[i]] if i in pa else -1 for i in range(len(a))]
+    b["pair_cmp"] = [a["trig_ids"].iat[pb[j]] if j in pb else -1 for j in range(len(b))]
     a["pair_group"] = [b["group"].iat[pa[i]] if i in pa else "absent" for i in range(len(a))]
     b["pair_group"] = [a["group"].iat[pb[j]] if j in pb else "absent" for j in range(len(b))]
     cross = pd.crosstab(pd.Categorical(a["group"], ["matched", "A", "B", "other"]),
                         pd.Categorical(a["pair_group"], ["matched", "A", "B", "other", "absent"]), dropna=False)
-    cross_b = b.loc[b["pair_v2"] < 0, "group"].value_counts().reindex(["matched", "A", "B", "other"]).fillna(0).astype(int)
-    cross.to_csv(OUT / "overlap_v2_rows_vs_seed1_cols.csv")
-    summary["overlap"] = {"pairs": len(pairs), "only_v2": int((a["pair_seed1"] < 0).sum()),
-                          "only_seed1": int((b["pair_v2"] < 0).sum()),
-                          "only_seed1_by_group": cross_b.to_dict(),
+    cross_b = b.loc[b["pair_cmp"] < 0, "group"].value_counts().reindex(["matched", "A", "B", "other"]).fillna(0).astype(int)
+    cross.to_csv(OUT / "overlap_cmp_rows_vs_ref_cols.csv")
+    summary["overlap"] = {"pairs": len(pairs), "only_cmp": int((a["pair_ref"] < 0).sum()),
+                          "only_ref": int((b["pair_cmp"] < 0).sum()),
+                          "only_ref_by_group": cross_b.to_dict(),
                           "median_abs_dstart_s": float(np.median([d for _, _, d in pairs])) if pairs else None}
-    a.to_csv(OUT / "events_orbit_v2.csv", index=False)
-    b.to_csv(OUT / "events_orbit_seed1.csv", index=False)
+    a.to_csv(OUT / "events_orbit_cmp.csv", index=False)
+    b.to_csv(OUT / "events_orbit_ref.csv", index=False)
 
-    # 'other' events of seed1 with GBM catalog entries within 1 h
+    # 'other' events of the reference run with GBM catalog entries within 1 h
     cat = pd.read_csv(GBM_TRIG_DB)
     oth = b[b["group"] == "other"].copy()
     gbm_near = []
@@ -404,21 +429,21 @@ def main() -> None:
     oth["gbm_within_1h"] = gbm_near
     cols = ["trig_ids", "start_times", "duration", "detectors", "sigma_r0", "sigma_r1", "sigma_r2", "sigma_C", "CE",
             "lat", "lon", "alt_km", "L", "phase_deg", "t_since_saa_exit_s", "t_to_saa_entry_s",
-            "prev_orbit_saa_offset_s", "dist_saa_gap_s", "pair_v2", "pair_group", "gbm_within_1h"]
-    oth[cols].to_csv(OUT / "others_seed1.csv", index=False)
+            "prev_orbit_saa_offset_s", "dist_saa_gap_s", "pair_cmp", "pair_group", "gbm_within_1h"]
+    oth[cols].to_csv(OUT / "others_ref.csv", index=False)
 
     # Map
     colors = {"matched": ("black", 12, "abbinati Crupi/GBM"), "A": ("tab:red", 40, "senza controparte A"),
               "B": ("tab:blue", 40, "senza controparte B"), "other": ("tab:green", 40, "senza controparte altri")}
     fig, axes = plt.subplots(2, 1, figsize=(11, 10), sharex=True)
-    for ax, name in zip(axes, ["seed1", "v2"]):
+    for ax, name in zip(axes, ["ref", "cmp"]):
         ax.scatter(((orbit.saa_ground[:, 1] + 180) % 360) - 180, orbit.saa_ground[:, 0], s=1, c="0.85", label="campioni POSHIST in SAA")
         ax.scatter(null["lon"], null["lat"], s=1, c="0.6", alpha=0.3, label="tempi casuali validi")
         ev = events[name]
         for g, (c, sz, lab) in colors.items():
             sub = ev[ev["group"] == g]
             ax.scatter(sub["lon"], sub["lat"], s=sz, c=c, label=f"{lab} ({len(sub)})", edgecolors="none" if g == "matched" else "k")
-        ax.set_title(f"engine-v2{'-seed1' if name == 'seed1' else ''}: posizione di Fermi all'inizio dell'evento")
+        ax.set_title(f"{RUNS[name]['run'].name}: posizione di Fermi all'inizio dell'evento")
         ax.set_ylabel("latitudine [deg]")
         ax.set_xlim(-180, 180)
         ax.set_ylim(-30, 30)
@@ -434,8 +459,8 @@ def main() -> None:
     bins = np.arange(0, 6.01, 0.1)
     ax.hist(null["t_since_saa_exit_s"] / orbit.period, bins=bins, density=True, color="0.7", label="tempi casuali validi")
     for g, c in (("matched", "black"), ("A", "tab:red"), ("B", "tab:blue"), ("other", "tab:green")):
-        sub = events["seed1"].loc[events["seed1"]["group"] == g, "t_since_saa_exit_s"] / orbit.period
-        ax.hist(sub, bins=bins, density=True, histtype="step", lw=2, color=c, label=f"seed1 {g} ({len(sub)})")
+        sub = events["ref"].loc[events["ref"]["group"] == g, "t_since_saa_exit_s"] / orbit.period
+        ax.hist(sub, bins=bins, density=True, histtype="step", lw=2, color=c, label=f"{R} {g} ({len(sub)})")
     ax.set_xlabel("tempo dall'ultima uscita dalla SAA [orbite]")
     ax.set_ylabel("densità")
     ax.legend(fontsize=8)
@@ -491,7 +516,7 @@ def main() -> None:
     summary["null_L_ge_1.4_%"] = float(100 * (null["L"] >= 1.4).mean())
 
     (OUT / "summary.json").write_text(json.dumps(summary, indent=2, default=float))
-    print(json.dumps(summary, indent=2, default=float))
+    detail(f"written {OUT}")
 
 
 if __name__ == "__main__":
