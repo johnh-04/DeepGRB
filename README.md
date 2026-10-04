@@ -7,7 +7,7 @@ background count rates of the 12 NaI detectors from the orbital state of the spa
 Poisson-FOCuS trigger algorithm looks for significant excesses over that background.
 
 This repository is a **consolidated version** of DeepGRB, maintained by **Giovanni Pio Martello**
-(Politecnico di Bari, master's thesis with Prof. Elisabetta Bissaldi; runs on the ReCaS Bari
+(Politecnico di Bari, bachelor's thesis with Prof. Elisabetta Bissaldi; runs on the ReCaS Bari
 cluster and its Jupyter service). It reproduces the 2019 results of Crupi et al. (2023) with
 verifiable code and is the base for a learned classifier (XGBoost) and for the 2024 data.
 
