@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from benchmark.validate import md_table
+from benchmark.report import md_table
 from connections.utils.config import BASE_DIR, END_DATE, ENGINE_VERSION, START_DATE
 from models.saa_flags import EDGE_WINDOW_S, REGION_DEG, SAA_GAP_S, ZERO_PAD_BINS
 
