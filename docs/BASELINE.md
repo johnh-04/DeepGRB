@@ -67,7 +67,22 @@ python -m benchmark.classify --jobs 4
 
 Il modello legacy del 2019 viene usato solo per il periodo su cui è stato addestrato. Gli altri periodi richiedono un training esplicito (`DEEPGRB_ALLOW_TRAINING=1`), che salva un bundle con il seed (`TRAIN_SEED` nella pipeline). La validazione contro Crupi esiste solo per il 2019: `benchmark/validate.py` per un altro periodo produce la parte A (catalogo GBM) e riporta le tabelle di Crupi come fuori finestra.
 
-## 6. Limiti noti
+## 6. Riaddestrare la rete 2019 (run etichettata)
+
+Il modello legacy e la run `engine-v2` non vengono toccati: la nuova rete va in un bundle e in una cartella di run separati, che non devono esistere.
+
+```bash
+cd DeepGRB
+LABEL=seed1 SEED=1
+nohup env DEEPGRB_RUN_LABEL=$LABEL DEEPGRB_TRAIN_SEED=$SEED DEEPGRB_FORCE_TRAIN=1 DEEPGRB_SKIP_DOWNLOAD=1 \
+    python -u pipeline/pipeline_bkg.py > logs/train_$LABEL.log 2>&1 &
+# a training finito:
+python -m benchmark.validate --run data/runs/2019-03-01_2019-06-30/engine-v2-$LABEL --out benchmark/out/$LABEL
+```
+
+Variabili: `DEEPGRB_RUN_LABEL`, `DEEPGRB_TRAIN_SEED`, `DEEPGRB_FORCE_TRAIN=1`, `DEEPGRB_REUSE_BUNDLE=1` (riusa un bundle etichettato esistente), `DEEPGRB_SKIP_DOWNLOAD=1` (salta gli step 1–2). Il log contiene la GPU rilevata, i parametri, le righe di train/validazione/test, una riga per epoca, il MAE per canale e il tempo totale; il bundle (`metadata.json`) registra seed, periodo, versioni, commit git, MAE e durata.
+
+## 7. Limiti noti
 
 - La rete è una ri-esecuzione della ricetta di Crupi (addestrata il 2026-09-21), non la sua rete originale, che non è disponibile. Ne seguono 52 eventi senza controparte né GBM né Crupi (diagnosi per evento nel report). La stabilità rispetto al seed non è stata misurata (richiede nuovi training).
 - Classificatore: è la baseline euristica di Crupi (soglie da decision tree rifinite a mano), da superare con XGBoost (docs/WORKING_RULES.md, Fase 6). Mancano la regola FP e le feature `fe_*` (tsfel, branch upstream `ric_review_28062023`).

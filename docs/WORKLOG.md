@@ -214,3 +214,32 @@ Uno-a-uno (assegnazione greedy per distanza). Un riferimento è abbinato se il s
 - Mancano ancora la regola FP e le feature `fe_*`. Sono calcolate con `tsfel` nel branch upstream `ric_review_28062023` (`models/localize_event.py`): curva di luce media dei rivelatori scattati, ±64 s, normalizzata min-max, wavelet con larghezze 1–9.
 - `tsfel` e `xgboost` non sono installati nell'env.
 - Etichette disponibili: 324 eventi di Crupi (2010-11: 73, 2014: 152, 2019: 99). Servono le run del motore anche su 2010-11 e 2014.
+
+---
+
+## 2026-10-04 — Riaddestramento della rete 2019: supporto nel codice (training non eseguito)
+
+Richiesta: poter riaddestrare la rete 2019 da zero con il codice attuale, in run separate e senza toccare il modello legacy né la run `engine-v2`. Il training lo lancia Giovanni in background; qui **solo modifiche al codice e test** (nessun training reale eseguito).
+
+### Commit
+- `b28c122` **import pigri di `gbm.finder`.** La libreria fa login FTP su HEASARC già all'import, e veniva importata da `connections/__init__` e `models/__init__`. Qualunque import della config richiedeva quindi la rete, anche con tutti i dati su disco: un nodo offline sarebbe fallito subito. Test: `tests/test_no_ftp_on_import.py` (fallisce con il codice precedente: `FINDER_LOADED`).
+- `d5d0bc7` **report di training su stdout** con `flush=True`: parametri, seed, righe fit/validazione/test, una riga per epoca (loss, val_loss, lr, tempo), MAE per canale del miglior checkpoint, tempo totale. `metadata.json` del bundle aggiunge righe, epoche eseguite, epoca migliore, storia della loss, dispositivi, `training_seconds`, commit git, etichetta. La ricetta (iperparametri, scaler, split, callback di training) non cambia; `train()` rifiuta una cartella di bundle esistente. Test: `tests/test_training_report.py` (riga leggibile prima della fine del processo, con `python -u`).
+- `1b234d4` **run etichettate e training forzato** (`utils/run_options.py`, `pipeline/pipeline_bkg.py`):
+  - `DEEPGRB_RUN_LABEL=<etichetta>` → `data/runs/<start>_<end>/engine-v2-<etichetta>/` e bundle `data/nn_model/bundles/model_<start>_<end>_<etichetta>/`; se la cartella esiste, la pipeline si ferma prima di scrivere qualunque cosa.
+  - `DEEPGRB_FORCE_TRAIN=1` → training anche sul periodo 2019; il modello legacy non viene mai caricato. Richiede `DEEPGRB_RUN_LABEL` e `DEEPGRB_TRAIN_SEED`.
+  - `DEEPGRB_TRAIN_SEED=<intero>` → seed di python/numpy/TensorFlow, salvato nel metadata e nel manifest.
+  - `DEEPGRB_REUSE_BUNDLE=1` → se il bundle etichettato esiste, lo usa invece di fermarsi.
+  - `DEEPGRB_SKIP_DOWNLOAD=1` → salta gli step 1–2 dopo aver verificato che esistano tutte le tabelle giornaliere.
+  - All'avvio stampa la GPU rilevata o l'avviso che il training girerebbe su CPU.
+  - Senza queste variabili il comportamento è quello di prima (stessa cartella usata come cache, stesso modello legacy).
+  - Test: `tests/test_run_options.py`. Il test chiave usa un modello legacy *corrotto* (bundle e `.h5`) e un vero `ModelNN` su dati di prova: con il flag di forzatura il training si completa e i file legacy restano identici (sha256), quindi non sono stati caricati.
+
+### Verifiche eseguite
+- Test: **72/72 OK** (`python -m unittest discover -s tests -t .`).
+- Percorsi d'errore reali della pipeline (escono subito, senza training né cartelle nuove): `DEEPGRB_FORCE_TRAIN=1` senza etichetta, e senza seed.
+- `data/runs/2019-03-01_2019-06-30/` contiene ancora solo `engine-v2` e `engine-v2-sens-tmax29`.
+
+### Non verificato
+- Nessun training reale sui dati 2019 (né su CPU né su GPU): tempi, memoria e convergenza non misurati.
+- Su questo nodo TensorFlow non vede GPU. Il comportamento con una GPU (memory growth, velocità) non è stato provato.
+- Riproducibilità bit a bit tra due training con lo stesso seed: su GPU TensorFlow non è deterministico per default (non attivato `TF_DETERMINISTIC_OPS`, per non cambiare la ricetta).
