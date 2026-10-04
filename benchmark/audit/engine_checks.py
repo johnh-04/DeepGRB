@@ -41,7 +41,7 @@ def check_reproduction(bkg: pd.DataFrame, OLD_BKG) -> list:
     ok = np.isfinite(new_v) & np.isfinite(old_v) & (old_v != 10.0)  # 10.0 = overwritten by the old step 4
     diff = np.abs(new_v[ok] - old_v[ok])
     rel = diff / np.abs(old_v[ok])
-    same_met = np.allclose(bkg["met"].to_numpy(), pd.read_csv(OLD_BKG.with_name("frg_03-2019_07-2019.csv"), usecols=["met"])["met"].to_numpy())
+    same_met = np.allclose(bkg["met"].to_numpy(), pd.read_csv(OLD_BKG.with_name(OLD_BKG.name.replace("bkg_", "frg_", 1)), usecols=["met"])["met"].to_numpy())
     return [
         f"- Cells compared: {int(ok.sum())} (same row MET as old frg: {same_met})",
         f"- |new - old|: median {np.median(diff):.3e}, 99.9th pct {np.quantile(diff, 0.999):.3e}, max {diff.max():.3e} counts/s",

@@ -395,7 +395,8 @@ def main(argv=None) -> int:
     try:
         env = settings_to_env(USER_SETTINGS, os.environ)
     except RunOptionsError as e:
-        print(f"[settings] {e}", file=sys.stderr)
+        setup_logging()
+        log.error(f"[settings] {e}")
         return 2
     start, end, label = env["DEEPGRB_START_DATE"], env["DEEPGRB_END_DATE"], env["DEEPGRB_RUN_LABEL"] or None
     jobs = args.jobs or int(env["DEEPGRB_JOBS"] or 1)

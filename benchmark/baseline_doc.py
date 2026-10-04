@@ -171,14 +171,19 @@ def main() -> None:
         f"(`python -m benchmark.audit.data_inventory --run {rel(ref)}`).",
         "",
         "```bash",
-        "# a) riferimento seed1 dagli artefatti esistenti (riusa pred/ e trig/ della run engine-v2-seed1; nessun training, nessun FOCuS)",
-        "DEEPGRB_RUN_LABEL=seed1 DEEPGRB_SKIP_DOWNLOAD=1 python -u pipeline/pipeline_bkg.py --jobs 4",
+        f"# a) riferimento dagli artefatti esistenti (riusa pred/ e trig/ di {Path(reused.get('run', '?')).name}; nessun training, nessun FOCuS)",
+        f"DEEPGRB_START_DATE={start} DEEPGRB_END_DATE={end} "
+        + (f"DEEPGRB_RUN_LABEL={m_ref['run_label']} " if m_ref.get("run_label") else "")
+        + "DEEPGRB_SKIP_DOWNLOAD=1 python -u pipeline/pipeline_bkg.py --jobs 4",
         "",
-        "# b) confronto con la rete legacy (riusa pred/ e trig/ di engine-v2)",
-        "DEEPGRB_SKIP_DOWNLOAD=1 python -u pipeline/pipeline_bkg.py --jobs 4",
+        f"# b) confronto con la rete legacy (riusa pred/ e trig/ di {Path((m_leg.get('reused_from') or {}).get('run', '?')).name})",
+        f"DEEPGRB_START_DATE={start} DEEPGRB_END_DATE={end} "
+        + (f"DEEPGRB_RUN_LABEL={m_leg['run_label']} " if m_leg.get("run_label") else "")
+        + "DEEPGRB_SKIP_DOWNLOAD=1 python -u pipeline/pipeline_bkg.py --jobs 4",
         "",
         "# c) da zero, nuovo training (cartella e bundle non devono esistere; GPU consigliata)",
-        "DEEPGRB_RUN_LABEL=<nuova etichetta> DEEPGRB_TRAIN_SEED=1 DEEPGRB_FORCE_TRAIN=1 DEEPGRB_SKIP_DOWNLOAD=1 python -u pipeline/pipeline_bkg.py",
+        f"DEEPGRB_START_DATE={start} DEEPGRB_END_DATE={end} DEEPGRB_RUN_LABEL=<nuova etichetta> DEEPGRB_TRAIN_SEED=1 "
+        "DEEPGRB_FORCE_TRAIN=1 DEEPGRB_SKIP_DOWNLOAD=1 python -u pipeline/pipeline_bkg.py",
         "",
         "# documenti",
         f"python -m benchmark.baseline_doc --run {rel(ref)} --compare {rel(cmp)}",
