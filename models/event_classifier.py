@@ -21,12 +21,13 @@ UNC(LP), GF, UNC) is our convention.
 """
 
 import logging
+from pathlib import Path
 from typing import Optional
 import numpy as np
 import pandas as pd
 
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
 class CrupiEventClassifier:
@@ -154,3 +155,28 @@ class CrupiEventClassifier:
         y_pred["predicted_class"] = y_pred.apply(resolve_label, axis=1)
         self.y_pred = y_pred
         return self.y_pred
+
+
+CATALOG_COLUMNS = ["catalog_triggers"]  # kept in the output for reference, never used to classify
+RULE_LABELS = ["GRB", "TGF", "SF", "UNC(LP)", "GF"]
+
+
+def classify_events(loc_path: Path, out_path: Path) -> pd.DataFrame:
+    """
+    Classifies a localized event table with Crupi's rules (no catalog input) and writes
+    events_classified.csv: one boolean column per rule (Crupi evaluated each rule one-vs-rest)
+    and the single-label convention in predicted_class. Never overwrites.
+    """
+    out_path = Path(out_path)
+    if out_path.exists():
+        raise FileExistsError(f"Refusing to overwrite {out_path}")
+    events = pd.read_csv(loc_path)
+    features = events.drop(columns=[c for c in CATALOG_COLUMNS if c in events.columns])
+    clf = CrupiEventClassifier(features)
+    clf.prepare_features()
+    y = clf.apply_classification_logic()
+    for label in RULE_LABELS:
+        events[f"rule_{label}"] = y[label].astype(bool).values
+    events["predicted_class"] = y["predicted_class"].values
+    events.to_csv(out_path, index=False)
+    return events

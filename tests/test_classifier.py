@@ -1,11 +1,13 @@
 """The classifier must not use catalog information (docs/WORKING_RULES.md §5.2, Phase 4)."""
 
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from models.event_classifier import CrupiEventClassifier
+from models.event_classifier import CrupiEventClassifier, classify_events
 
 
 def events() -> pd.DataFrame:
@@ -44,6 +46,23 @@ class TestNoLeakage(unittest.TestCase):
 
     def test_classes_are_from_the_rule_set(self):
         self.assertTrue(set(predict(events())) <= {"GRB", "TGF", "SF", "UNC(LP)", "GF", "UNC"})
+
+
+class TestClassifyStep(unittest.TestCase):
+    """Step 6 of the pipeline (ex benchmark/classify.py): same classes, catalog dropped, never overwrites."""
+
+    def test_writes_rules_and_class_without_catalog(self):
+        with tempfile.TemporaryDirectory() as d:
+            loc, out = Path(d) / "loc.csv", Path(d) / "classified.csv"
+            df = events()
+            df["catalog_triggers"] = "GRB190301000"
+            df.to_csv(loc, index=False)
+            res = classify_events(loc, out)
+            self.assertEqual(res["predicted_class"].tolist(), predict(events()).tolist())
+            self.assertTrue({"rule_GRB", "rule_TGF", "rule_SF", "rule_UNC(LP)", "rule_GF"} <= set(res.columns))
+            self.assertEqual(pd.read_csv(out)["predicted_class"].tolist(), res["predicted_class"].tolist())
+            with self.assertRaises(FileExistsError):
+                classify_events(loc, out)
 
 
 if __name__ == "__main__":
