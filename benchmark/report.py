@@ -108,8 +108,10 @@ def section_run(f: dict) -> List[str]:
         "## 1. Run, rete e parametri",
         "",
         f"- Periodo: **{f['start']} → {f['end']}** (giorni UTC inclusi); run `{rel(f['run'])}`.",
-        f"- Motore: engine v{p.get('engine_version', '?')}; eseguito dai commit "
-        + ", ".join(f"`{h.get('git_commit', '?')[:10]}`" + (" (codice modificato)" if h.get("code_dirty") else "") for h in history)
+        f"- Motore: engine v{p.get('engine_version', '?')}; esecuzioni: "
+        + "; ".join(f"{h.get('started', '?')[:16].replace('T', ' ')} commit `{h.get('git_commit', '?')[:10]}`"
+                    + (f" (step da eseguire all'avvio: {', '.join(map(str, h['steps']))})" if h.get("steps") else "")
+                    + (" (codice modificato)" if h.get("code_dirty") else "") for h in history)
         + ".",
         f"- Rete: bundle `{f['bundle'] or '?'}`; seed di training {seed_text(f)}; "
         f"checksum sha256 del bundle `{model.get('checksum', 'non registrato')}`.",
