@@ -92,7 +92,7 @@ def git_state() -> tuple:
     """(commit, engine code dirty) of the working tree."""
     try:
         commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True).stdout.strip()
-        dirty = bool(subprocess.run(["git", "status", "--porcelain", "--", "models", "pipeline", "connections", "utils", "benchmark"],
+        dirty = bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=no", "--", "models", "pipeline", "connections", "utils", "benchmark"],
                                     cwd=REPO_ROOT, capture_output=True, text=True).stdout.strip())
     except OSError:
         commit, dirty = "unknown", True
