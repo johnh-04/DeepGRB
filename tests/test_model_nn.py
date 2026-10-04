@@ -31,6 +31,21 @@ class TestTime(unittest.TestCase):
         self.assertEqual(str(ts.iloc[0]), "2019-03-03 05:45:19.164136")
 
 
+class TestConvergenceCheck(unittest.TestCase):
+    def test_reference_and_flag(self):
+        from models.model_nn import convergence_check
+        y_fit = np.array([[10.0, 100.0], [12.0, 104.0], [11.0, 102.0]])
+        y_val = np.array([[11.0, 103.0], [13.0, 101.0]])
+        # constant median (11, 102): |0|+|1|+|2|+|1| over 4 cells = 1.0; always zero: (11+103+13+101)/4 = 57
+        good = convergence_check(y_fit, y_val, {"val_loss": [5.0, 0.4]})
+        self.assertAlmostEqual(good["ref_constant_median_val_mae"], 1.0)
+        self.assertAlmostEqual(good["ref_zero_val_mae"], 57.0)
+        self.assertTrue(good["ok"])
+        bad = convergence_check(y_fit, y_val, {"val_loss": [5.0, 0.9]})
+        self.assertFalse(bad["ok"])
+        self.assertFalse(convergence_check(y_fit, y_val, {})["ok"])
+
+
 class TestCountNonpositive(unittest.TestCase):
     def test_counts_cells_and_bins(self):
         b = pd.DataFrame(100.0, index=range(4), columns=KEYS)
@@ -100,6 +115,8 @@ class TestBundleAndPredict(ModelTestCase):
         saved = json.loads((bundle / "metadata.json").read_text())
         self.assertEqual(saved["period"], {"start_date": "2019-03-01", "end_date": "2019-03-02"})
         self.assertEqual(set(saved["metrics"]), set(KEYS))
+        self.assertIn("convergence", saved)
+        self.assertIn("ref_constant_median_val_mae", saved["convergence"])
         self.assertTrue((bundle / "scaler.joblib").exists())
 
         m2 = ModelNN("2019-03-01", "2019-03-02", bkg_dir=self.bkg_dir, trig_catalog_path=self.cat)

@@ -81,6 +81,25 @@ def saa_mask_indices(met: Sequence[float], time_to_del: int, gap_seconds: float 
     return np.where(mask)[0]
 
 
+# Convergence check (non-blocking): the final val_loss should be well below the MAE of a constant
+# per-channel median predictor (benchmark/analysis/lr_check.py: 20.4 on the 2019 validation split).
+CONVERGENCE_MAX_RATIO = 0.5
+
+
+def convergence_check(y_fit: np.ndarray, y_val: np.ndarray, history: Dict[str, list]) -> Dict:
+    """Compares the validation loss with trivial predictors (same split); never stops training."""
+    y_fit, y_val = np.asarray(y_fit, dtype=float), np.asarray(y_val, dtype=float)
+    ref_median = float(np.mean(np.abs(y_val - np.median(y_fit, axis=0))))
+    ref_zero = float(np.mean(np.abs(y_val)))
+    val = [float(v) for v in history.get("val_loss", [])]
+    final, best = (val[-1], min(val)) if val else (float("nan"), float("nan"))
+    ratio = final / ref_median if ref_median > 0 else float("nan")
+    return {"final_val_loss": final, "best_val_loss": best,
+            "ref_constant_median_val_mae": ref_median, "ref_zero_val_mae": ref_zero,
+            "final_over_constant_median": ratio, "max_ratio": CONVERGENCE_MAX_RATIO,
+            "ok": bool(np.isfinite(ratio) and ratio < CONVERGENCE_MAX_RATIO)}
+
+
 def report(msg: str = "") -> None:
     """Training report line on stdout, flushed at once (readable under nohup / python -u)."""
     print(msg, flush=True)
@@ -245,6 +264,7 @@ class ModelNN:
         self.nn_r = load_model(str(checkpoint), compile=False, custom_objects={"loss_median": loss_median, "loss_max": loss_max})
 
         metrics = self._channel_metrics(X_train_s, y_train, X_test_s, y_test)
+        conv = convergence_check(y_train.iloc[:n_fit].to_numpy(), y_train.iloc[n_fit:].to_numpy(), history.history)
         val_loss = history.history.get("val_loss", [])
         best_epoch = int(np.argmin(val_loss)) + 1 if val_loss else None
         report("-" * 70)
@@ -267,6 +287,7 @@ class ModelNN:
             "best_epoch": best_epoch,
             "history": {k: [float(v) for v in vals] for k, vals in history.history.items() if k in ("loss", "val_loss")},
             "metrics": metrics,
+            "convergence": conv,
             "devices": [d.name for d in tf.config.list_physical_devices("GPU")] or ["CPU"],
             "training_seconds": round(fit_seconds, 1),
             "total_seconds": round(time.time() - t_start, 1),
@@ -274,6 +295,12 @@ class ModelNN:
         self.metadata.update(dict(extra_metadata or {}))
         self.save_bundle(bundle_dir, model_file="model.keras")
         checkpoint.unlink(missing_ok=True)
+        report(f"[train] convergence: final val_loss {conv['final_val_loss']:.3f} (best {conv['best_val_loss']:.3f}); "
+               f"constant per-channel median {conv['ref_constant_median_val_mae']:.3f}, always zero {conv['ref_zero_val_mae']:.3f}; "
+               f"ratio {conv['final_over_constant_median']:.2f} -> "
+               + ("OK" if conv["ok"] else f"WARNING: final val_loss not well below the constant predictor (ratio >= {CONVERGENCE_MAX_RATIO})"))
+        if not conv["ok"]:
+            logging.warning("Training convergence check failed (non-blocking): see metadata.json 'convergence'.")
         report(f"[train] fit time {fit_seconds / 60:.1f} min; total (incl. metrics and saving) "
                f"{(time.time() - t_start) / 60:.1f} min; bundle {bundle_dir}")
         report("=" * 70)
