@@ -343,3 +343,27 @@ L'unico abbinato flaggato è l'evento 4 (2019-03-06 06:42), abbinato all'inedito
 
   All'epoca 4, ancora a 1e-2, la loss scende a 12.1, e con 1.6e-3 si stabilizza (val 4.9 all'epoca 6). La scelta di upstream sembra deliberata: Crupi disegnava la curva di training a partire dalla quinta epoca (`history['loss'][4:]`). Il meccanismo esatto non è verificabile, perché si salva solo il miglior checkpoint.
 - Nessuna modifica all'addestramento. Il nuovo controllo di convergenza guarda solo il risultato finale: su seed1 darebbe circa 4.4/20.4 ≈ 0.21 (OK).
+
+## 2026-10-04 — Consolidamento del framework
+
+Refactoring senza cambiamenti scientifici, da `f097be3` a `eb452c4` (dettaglio in `docs/REFACTOR_REPORT.md`):
+
+- **Struttura**:
+  - entry point unico `pipeline/pipeline_bkg.py` con blocco USER SETTINGS (le `DEEPGRB_*` hanno priorità);
+  - tabella di stato e 9 step che si saltano da soli; localizzazione e classificazione (step 6), flag (step 7, `models/flags.py`), validazione (step 8, `<run>/validation/`) e resoconto (step 9, `<run>/RESULTS.md`, `docs/RUNS.md`) fanno ora parte della pipeline.
+- **Configurazione e codice**:
+  - configurazione unica in `connections/utils/config.py`, senza date;
+  - logging unico (`utils/logs.py`, formato di Crupi);
+  - legacy rimosso (`scripts/`, `paramtrig`, `GBMutils`, `load_data`, ...);
+  - una sola conversione di tempo e una sola `md_table`;
+  - commenti in inglese; CLI tutte con `--run`.
+- **Manifest (difetto 17)**: parametri registrati una volta; modello descritto dal bundle (seed, sha256); una run incoerente si ferma.
+- **Prova di invarianza** sul codice finale (`21e4db1`), rigenerando engine-v3-seed1 ed engine-v3 dai pred/trig delle v2, senza training né FOCuS:
+  - `events_table` `eb0207fb…` e `events_classified` `7924b0d6…` identici, come pure `triggers_table`, `events_table_loc`, `78f54718…` e `e9bab9e9…`;
+  - identici tutti i CSV di validazione;
+  - numeri: 136 (102/11/23), 70/71, 21/24, 67/120; legacy 144 (105/18/21), 70/71, 21/24, 68/120.
+- **Repository**:
+  - 161 → 103 file tracciati, 315.3 → 5.0 MB, nessun file > 5 MB;
+  - 104 test verdi;
+  - nessun dato cancellato: i 50 file tolti dal disco dal rebase locale sono stati ripristinati dagli oggetti git e verificati con i checksum d'archivio.
+- **In attesa della conferma di Giovanni**: push di `main`, tag `v1.0-baseline`, eliminazione di `fix/baseline-2019` e `thesis` (comandi in REFACTOR_REPORT §8).
