@@ -5,7 +5,7 @@ All dates are UTC calendar days in ISO format ('YYYY-MM-DD'). A window
 [start, end] includes every instant of both the start and the end day.
 """
 
-from typing import List, Tuple
+from typing import List
 
 import pandas as pd
 
@@ -26,13 +26,6 @@ def in_window(times: pd.Series, start_date: str, end_date: str) -> pd.Series:
     """Boolean mask of UTC timestamps falling inside the inclusive window; missing times are outside."""
     t = pd.to_datetime(pd.Series(times), errors="coerce")
     return (t >= _day(start_date)) & (t < _day(end_date) + pd.Timedelta(days=1))
-
-
-def months_to_window(start_month: str, end_month: str) -> Tuple[str, str]:
-    """Converts legacy 'MM-YYYY' labels (end month exclusive) into an inclusive date window."""
-    start = pd.to_datetime(start_month, format="%m-%Y")
-    end = pd.to_datetime(end_month, format="%m-%Y") - pd.Timedelta(days=1)
-    return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 
 
 def days_with_data(timestamps: pd.Series, start_date: str, end_date: str) -> List[str]:

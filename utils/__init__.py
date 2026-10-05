@@ -1,4 +1,4 @@
-# General utilities package for channel keys and configuration
-from .keys import KDETS, KRANGES, get_keys, filter_keys
+# General utilities: channel keys, periods, Fermi time, run options, logging
+from .keys import get_keys
 
-__all__ = ["KDETS", "KRANGES", "get_keys", "filter_keys"]
+__all__ = ["get_keys"]

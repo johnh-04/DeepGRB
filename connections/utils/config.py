@@ -30,7 +30,6 @@ FOLD_NN = "nn_model"
 # catalogs (rebuilt from HEASARC by connections/fermi_data_tools.py)
 GBM_TRIG_DB = DATA_DIR / "gbm_trig_catalog.csv"
 GBM_BURST_DB = DATA_DIR / "gbm_burst_catalog.db"
-DEEP_GRB_CSV = DATA_DIR / "DeepGRB_catalog.csv"
 
 # ----------------------------------------------------------------------------- engine version
 # Outputs of steps 3-5 live in RUNS_DIR/<start>_<end>/engine-v<ENGINE_VERSION>[-<label>]/.

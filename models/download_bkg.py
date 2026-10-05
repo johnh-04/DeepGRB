@@ -25,7 +25,7 @@ import pandas as pd
 from astropy.io import fits
 
 from connections.utils.config import DATA_DIR, FOLD_CSPEC_POS, FOLD_POSHIST
-from utils.period import months_to_window, window_days
+from utils.period import window_days
 
 logger = logging.getLogger(__name__)
 
@@ -215,9 +215,3 @@ def download_days(
         for r in incomplete.itertuples():
             logger.warning(f"Day {r.day} still incomplete: {r.missing}")
     return schedule
-
-
-def download_spec(start_month: str, end_month: str, **kwargs) -> pd.DataFrame:
-    """Legacy entry point: 'MM-YYYY' labels with end month excluded. Prefer download_days."""
-    start_date, end_date = months_to_window(start_month, end_month)
-    return download_days(start_date, end_date, **kwargs)
