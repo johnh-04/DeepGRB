@@ -19,7 +19,7 @@ DATA_DIR = BASE_DIR / "data"
 RUNS_DIR = DATA_DIR / "runs"
 LOGS_DIR = BASE_DIR / "logs"
 DOCS_DIR = BASE_DIR / "docs"
-REFERENCE_DIR = BASE_DIR / "benchmark" / "reference"
+REFERENCE_DIR = BASE_DIR / "validation" / "reference"
 
 # subfolders of data/ shared by all periods
 FOLD_CSPEC_POS = "cspec"
@@ -62,7 +62,7 @@ FLAG_REGION_DEG = 3.5
 FLAG_REGION_GRID_DEG = 0.1
 FLAG_ZERO_PAD_BINS = 5
 
-# validation (benchmark/)
+# validation (validation/)
 MATCH_MARGIN_S = 2 * BIN_LENGTH_S         # primary one-to-one matching rule
 SENSITIVITY_MARGINS_S = {"primary (2 bins)": MATCH_MARGIN_S, "10 s": 10.0, "60 s": 60.0, "1200 s": 1200.0}
 SAA_GUARD_S = 150.0                       # "near SAA" in the catalog statistics (docs/WORKING_RULES.md §6)

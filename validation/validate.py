@@ -5,11 +5,11 @@ Validation of one engine run (pipeline step 8): computation only, no report text
   B. the tables of Crupi et al. (known: Table 11, unknown: Table 10), only when the run
      period overlaps the period of the paper (2019-03-01 -> 2019-07-09);
 
-with one-to-one matching (benchmark/matching.py). Every number is computed here from files on
+with one-to-one matching (validation/matching.py). Every number is computed here from files on
 disk and written to <run>/validation/: CSV tables and summary.json. The readable report
-(<run>/RESULTS.md) is written by benchmark/report.py from these files.
+(<run>/RESULTS.md) is written by validation/report.py from these files.
 
-Usage (repo root):  python -m benchmark.validate --run data/runs/<start>_<end>/engine-v<N>[-<label>]
+Usage (repo root):  python -m validation.validate --run data/runs/<start>_<end>/engine-v<N>[-<label>]
 """
 
 import argparse
@@ -23,7 +23,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from benchmark.matching import BINLENGTH, PRIMARY_MARGIN, match_one_to_one, overlap_one_to_one
+from validation.matching import BINLENGTH, PRIMARY_MARGIN, match_one_to_one, overlap_one_to_one
 from connections.utils.config import (BASE_DIR, CRUPI_REFERENCE_PERIOD, GBM_BURST_DB, GBM_TRIG_DB, REFERENCE_DIR,
                                       SAA_GAP_S, SAA_GUARD_S, SENSITIVITY_MARGINS_S, TRIGGER_THRESHOLD_SIGMA, run_period)
 from models.flags import FLAG_COLUMNS, event_start_met, unmasked_passages, zero_prediction_rows, PoshistTrack

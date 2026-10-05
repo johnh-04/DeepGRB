@@ -51,6 +51,5 @@ data/_archive_*/*
 # ----------------------------------------------------------------------------- old layout, kept on disk only
 data_test/
 connections/utils/m_check/
-benchmark/out/
-benchmark/analysis/out/
+benchmark/
 models/tests/

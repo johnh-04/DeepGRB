@@ -92,7 +92,7 @@ def git_state() -> tuple:
     """(commit, engine code dirty) of the working tree."""
     try:
         commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True).stdout.strip()
-        dirty = bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=no", "--", "models", "pipeline", "connections", "utils", "benchmark"],
+        dirty = bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=no", "--", "models", "pipeline", "connections", "utils", "validation"],
                                     cwd=REPO_ROOT, capture_output=True, text=True).stdout.strip())
     except OSError:
         commit, dirty = "unknown", True
@@ -329,7 +329,7 @@ class Pipeline:
         detail("flagged events: " + ", ".join(f"{c} {int(f[c].sum())}" for c in FLAG_COLUMNS))
 
     def step_validation(self) -> None:
-        from benchmark.validate import validate_run
+        from validation.validate import validate_run
         s = validate_run(self.run, POSHIST_DIR)
         detail(f"GBM catalog: {s['gbm']['detected']}/{s['gbm']['available']} triggers detected"
                + (f"; Crupi known {s['crupi']['known']['matched']}/{s['crupi']['known']['in_window']}, "
@@ -337,7 +337,7 @@ class Pipeline:
                   else "; Crupi's tables do not cover this period"))
 
     def step_report(self) -> None:
-        from benchmark.report import write_results, write_runs_index
+        from validation.report import write_results, write_runs_index
         detail(f"written {rel(write_results(self.run))} and {rel(write_runs_index())}")
 
     # ------------------------------------------------------------------ run

@@ -4,7 +4,7 @@ Event classifier reproducing Crupi's deterministic heuristic rules.
 The predicted class depends only on physical features (significance per range,
 hardness ratios, Sun/Earth angular distances, SAA/pole proximity, galactic
 latitude, duration, detector counts). Catalog columns are never read here; they
-are used only by the validation (benchmark/validate.py).
+are used only by the validation (validation/validate.py).
 
 Provenance: the rules are Crupi's "manual classification logic" in
 upstream pipeline/script_classification2.py (2023). Their thresholds were read from

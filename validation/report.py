@@ -6,11 +6,11 @@ Readable reports of the runs (pipeline step 9), written only from files on disk:
 - docs/RUNS.md: one row per run found in data/runs/.
 
 Inputs: <run>/manifest.json, the bundle metadata, <run>/results/*.csv and <run>/validation/
-(benchmark/validate.py). No number is written by hand.
+(validation/validate.py). No number is written by hand.
 
 Usage (repo root):
-    python -m benchmark.report --run data/runs/<start>_<end>/engine-v<N>[-<label>]
-    python -m benchmark.report --index          # only docs/RUNS.md
+    python -m validation.report --run data/runs/<start>_<end>/engine-v<N>[-<label>]
+    python -m validation.report --index          # only docs/RUNS.md
 """
 
 import argparse
@@ -21,7 +21,7 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 
-from benchmark.report_tables import (TYPE_TO_CLASS, JoinError, check_gbm_join, confusion_metrics, crupi_named_list, gbm_named_list,
+from validation.report_tables import (TYPE_TO_CLASS, JoinError, check_gbm_join, confusion_metrics, crupi_named_list, gbm_named_list,
                                      gbm_type_vs_class)
 from connections.utils.config import (BASE_DIR, BIN_LENGTH_S, CRUPI_REFERENCE_PERIOD, DOCS_DIR, FOCUS_T_MAX_BINS, MATCH_MARGIN_S,
                                       RUNS_DIR, run_period)
@@ -483,7 +483,7 @@ def results_markdown(run: Path) -> str:
     lines = [
         f"# Resoconto della run `{f['name']}` ({f['start']} → {f['end']})",
         "",
-        "Generato da `benchmark/report.py` (step 9 di `pipeline/pipeline_bkg.py`)"
+        "Generato da `validation/report.py` (step 9 di `pipeline/pipeline_bkg.py`)"
         + (f"; validazione del {s['generated']}, commit `{s['validation_git_commit'][:10]}`" if s else "")
         + ". Tutti i numeri sono letti da file della run; le tabelle complete sono in `validation/` e `results/`.",
         "",
@@ -531,7 +531,7 @@ def write_runs_index() -> Path:
     lines = [
         "# Run del motore",
         "",
-        "Generato da `python -m benchmark.report --index` (anche allo step 9 della pipeline): una riga per ogni run in `data/runs/` "
+        "Generato da `python -m validation.report --index` (anche allo step 9 della pipeline): una riga per ogni run in `data/runs/` "
         "con un `manifest.json`. Valori letti dai file della run; \"—\" = step non eseguito o non applicabile.",
         "",
         md_table(pd.DataFrame(rows)),
