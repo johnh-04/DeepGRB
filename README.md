@@ -78,6 +78,11 @@ Every setting can also be given as an environment variable `DEEPGRB_<NAME>`, whi
 python -u pipeline/pipeline_bkg.py --dry-run          # status table and steps to run, writes nothing
 nohup python -u pipeline/pipeline_bkg.py --jobs 4 > logs/pipeline.out 2>&1 &
 
+# verification run, steps 3-9, with a copy of an existing bundle and a NEW label (settings at the top
+# of the file; never trains, never touches the baseline run)
+python -u pipeline/pipeline_start.py --dry-run
+nohup python -u pipeline/pipeline_start.py > logs/verify1.out 2>&1 &
+
 # the 2019 reference run (retrained network, seed 1), reusing existing data
 DEEPGRB_RUN_LABEL=seed1 DEEPGRB_SKIP_DOWNLOAD=1 nohup python -u pipeline/pipeline_bkg.py > logs/seed1.out 2>&1 &
 
@@ -95,6 +100,7 @@ explicit seed and a label.
 
 ```
 pipeline/pipeline_bkg.py      entry point (USER SETTINGS, status table, 9 steps)
+pipeline/pipeline_start.py    verification run of steps 3-9 with a copied bundle and a new label
 connections/                  configuration (utils/config.py) and Fermi/GBM catalogs from HEASARC
 utils/                        channel keys, periods, Fermi time, run options and manifest, logging
 models/                       download, preprocess, background network, FOCuS (trigs/), events,
@@ -115,8 +121,12 @@ changes when a code change alters the events, so old results are never mixed wit
 Every run has the same sections: (1) period, network (bundle, seed, checksum) and parameters;
 (2) events and tiers R/S/P; (3) official GBM catalog: triggers by type, GRB by T90, sensitivity to the
 matching window (2 bins, 10, 60, 1200 s); (4) comparison with Crupi et al. with ✔/✘ acceptance
-criteria (2019 only); (5) events without counterpart, split by flag; (6) classification against the
-reference; (7) localization; (8) engine anomalies (predicted background ≤ 0, convergence, stability).
+criteria (2019 only); (5) events without counterpart, split by flag; (6) classification: confusion
+matrix against Crupi's tentative classes (counts, row and column percentages, recall, precision,
+support, accuracy) and GBM trigger type against predicted class, with the concordance of a
+hypothetical type → class mapping; (7) localization; (8) engine anomalies (predicted background ≤ 0,
+convergence, stability); (9) lists by name: every GBM GRB and non-GRB trigger of the period and every
+Crupi event, with outcome and predicted class (also as CSV in `validation/`).
 `docs/RUNS.md` has one line per run.
 
 ## Example: the 2019 baseline
