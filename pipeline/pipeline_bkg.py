@@ -25,7 +25,7 @@ Settings: the USER SETTINGS block below; DEEPGRB_* environment variables take pr
 # ================================ USER SETTINGS ================================
 START_DATE = "2019-03-01"   # first UTC day, included
 END_DATE = "2019-06-30"     # last UTC day, included
-RUN_LABEL = None            # e.g. "seed1": separate run folder and model bundle (None = default run)
+RUN_LABEL = "seed1"         # official 2019 run engine-v3-seed1 (network trained with seed 1); None = unlabelled run
 TRAIN_SEED = None           # integer seed; required with FORCE_TRAIN
 FORCE_TRAIN = False         # train a new network (needs RUN_LABEL and TRAIN_SEED; hours on GPU)
 REUSE_BUNDLE = False        # load an existing labelled bundle instead of stopping
