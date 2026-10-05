@@ -6,7 +6,7 @@ pipeline/pipeline_bkg.py (or by DEEPGRB_START_DATE / DEEPGRB_END_DATE), and ever
 tool reads it from the manifest.json of the run it works on.
 
 Scientific parameters follow the upstream code that produced Crupi et al. (2023); the three
-places where the code differs from the paper text are documented in docs/WORKING_RULES.md §2.
+places where the code differs from the paper text are documented in docs/DIFFERENCES_FROM_UPSTREAM.md.
 """
 
 import json
@@ -55,7 +55,7 @@ MIN_DET_NUMBER = 1
 MAX_DET_NUMBER = 13                       # exclusive upper bound; with 12 NaI it never vetoes
 MERGE_S = 600                             # triggers closer than this are merged into one event
 
-# post-processing flags (models/flags.py; docs/ORBIT_ANALYSIS.md)
+# post-processing flags (models/flags.py; docs/VALIDATION.md)
 FLAG_EDGE_WINDOW_S = 200.0
 FLAG_REGION_DEG = 3.5
 FLAG_REGION_GRID_DEG = 0.1
@@ -64,7 +64,7 @@ FLAG_ZERO_PAD_BINS = 5
 # validation (validation/)
 MATCH_MARGIN_S = 2 * BIN_LENGTH_S         # primary one-to-one matching rule
 SENSITIVITY_MARGINS_S = {"primary (2 bins)": MATCH_MARGIN_S, "10 s": 10.0, "60 s": 60.0, "1200 s": 1200.0}
-SAA_GUARD_S = 150.0                       # "near SAA" in the catalog statistics (docs/WORKING_RULES.md §6)
+SAA_GUARD_S = 150.0                       # "near SAA" in the catalog statistics (docs/VALIDATION.md)
 CRUPI_REFERENCE_PERIOD = ("2019-03-01", "2019-07-09")  # period covered by Crupi's tables
 
 

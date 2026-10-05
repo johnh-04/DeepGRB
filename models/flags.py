@@ -1,5 +1,5 @@
 """
-Post-processing flags (step 7; docs/ORBIT_ANALYSIS.md). They add columns to an event table and
+Post-processing flags (step 7; docs/VALIDATION.md). They add columns to an event table and
 never change the list of events:
 
 - saa_edge_short_passage: the event start (FOCuS change point) lies within FLAG_EDGE_WINDOW_S

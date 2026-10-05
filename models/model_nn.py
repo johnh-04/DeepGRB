@@ -78,7 +78,7 @@ def saa_mask_indices(met: Sequence[float], time_to_del: int, gap_seconds: float 
 
 
 # Convergence check (non-blocking): the final val_loss should be well below the MAE of a constant
-# per-channel median predictor (one-off check of 2026-10-04, docs/WORKLOG.md: 20.4 on the 2019 validation split).
+# per-channel median predictor (MAE 20.4 on the 2019 validation split).
 CONVERGENCE_MAX_RATIO = 0.5
 
 
