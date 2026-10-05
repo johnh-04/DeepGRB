@@ -19,6 +19,7 @@ import pandas as pd
 
 from benchmark.matching import overlap_one_to_one
 from benchmark.report import md_table, ratio, rel
+from benchmark.report_tables import TYPE_TO_CLASS, confusion_metrics, gbm_type_vs_class
 from connections.utils.config import (BASE_DIR, DOCS_DIR, FLAG_EDGE_WINDOW_S, FLAG_REGION_DEG, FLAG_ZERO_PAD_BINS,
                                       SAA_GAP_S, run_period)
 from utils.logs import detail, setup_logging
@@ -73,6 +74,28 @@ def key_numbers(run: Path) -> dict:
 def lonely_flagged(run: Path) -> int:
     fs = pd.read_csv(run / "validation" / "flag_summary.csv").set_index("eventi")
     return int(fs.loc["senza controparte", "almeno uno"])
+
+
+def classification_text(run: Path) -> list:
+    """Classification of the reference run against Crupi's tentative classes and GBM trigger types."""
+    v = run / "validation"
+    cls_path = run / "results" / "events_classified.csv"
+    if not (v / "classification_vs_crupi.csv").exists() or not cls_path.exists():
+        return ["_Classificazione non disponibile per la run di riferimento._"]
+    cm = confusion_metrics(pd.read_csv(v / "classification_vs_crupi.csv"))
+    pc = cm["per_class"].set_index("classe")
+    _, _, conc, total = gbm_type_vs_class(pd.read_csv(v / "matches_gbm_catalog.csv"), pd.read_csv(cls_path))
+    per_type = ", ".join(f"{r['tipo GBM']} {int(r['concordi'])}/{int(r['abbinati'])}" for _, r in conc.iterrows())
+    return [
+        f"- Contro le classi **tentative** di Crupi (eventi con classe univoca): {cm['n']} eventi, accuracy "
+        f"{cm['correct']}/{cm['n']} ({cm['accuracy']:.1f}%); GRB recall {pc.loc['GRB', 'recall %']:.1f}%, precision "
+        f"{pc.loc['GRB', 'precision %']:.1f}% (supporto {int(pc.loc['GRB', 'supporto (Crupi)'])}).",
+        f"- Contro il tipo di trigger GBM degli eventi abbinati, con la mappatura **ipotetica** "
+        f"{', '.join(f'{k}→{c}' for k, c in TYPE_TO_CLASS.items())}: {total['agree']}/{total['n']} ({total['pct']:.1f}%); "
+        f"per tipo {per_type}. Il tipo GBM non è la natura fisica dell'evento.",
+        "- Matrici complete (conteggi, percentuali per riga e per colonna) ed elenchi per nome di GRB, trigger non-GRB ed "
+        f"eventi di Crupi: `{rel(run / 'RESULTS.md')}` §6 e §9, CSV in `{rel(v)}/`.",
+    ]
 
 
 def readme_block(ref: Path, cmp: Path) -> str:
@@ -206,6 +229,10 @@ def main() -> None:
         "Regola di abbinamento: uno-a-uno, istante del riferimento entro [inizio evento − 2 bin, fine evento + 2 bin] (`benchmark/matching.py`). "
         f"Il paper (fino al 9 luglio) riporta 100 eventi, GRB 65/81, T90 > 4.096 s 60/68, T90 ≤ 4.096 s 5/13. "
         "Le run v2 usano il motore precedente (S calcolato anche sui bin con fondo previsto ≤ 0); flag e validazione sono quelli attuali.",
+        "",
+        "### Classificazione (baseline euristica di Crupi, run di riferimento)",
+        "",
+        *classification_text(ref),
         "",
         "## 4. Flag di post-processing (`models/flags.py`, step 7; non cambiano l'elenco degli eventi)",
         "",

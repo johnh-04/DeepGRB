@@ -1,0 +1,6 @@
+classe,supporto (Crupi),predetti,corretti,recall %,precision %
+GRB,70,75,68,97.14285714285714,90.66666666666666
+SF,5,5,4,80.0,80.0
+TGF,2,1,0,0.0,0.0
+UNC,0,2,0,,0.0
+UNC(LP),10,4,3,30.0,75.0

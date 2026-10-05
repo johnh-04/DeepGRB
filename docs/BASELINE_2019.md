@@ -1,6 +1,6 @@
 # Baseline 2019 — documento di riferimento
 
-Generato da `python -m benchmark.baseline_doc --run data/runs/2019-03-01_2019-06-30/engine-v3-seed1 --compare data/runs/2019-03-01_2019-06-30/engine-v3` (codice al commit `49ae617`). Numeri, metadati e checksum letti dai file; nessuna cifra scritta a mano.
+Generato da `python -m benchmark.baseline_doc --run data/runs/2019-03-01_2019-06-30/engine-v3-seed1 --compare data/runs/2019-03-01_2019-06-30/engine-v3` (codice al commit `9e8e07e`). Numeri, metadati e checksum letti dai file; nessuna cifra scritta a mano.
 
 ## 1. Riferimento
 
@@ -44,8 +44,15 @@ Una run esistente riprende solo gli step mancanti e non viene mai riscritta: per
 | `engine-v2-sens-tmax29` | `model_03-2019_07-2019_4.4_2026-09-21` | 144 | 105/18/21 | 70/71 | 21/24 | 15/16 | 68/120 | 60/78 | 54/65 / 6/13 | 53 | 1/91 / 38/53 | — |
 | `engine-v3` | `model_03-2019_07-2019_4.4_2026-09-21` | 144 | 105/18/21 | 70/71 | 21/24 | 15/16 | 68/120 | 60/78 | 54/65 / 6/13 | 53 | 1/91 / 38/53 | 79/91 |
 | `engine-v3-seed1` | `model_2019-03-01_2019-06-30_seed1` | 136 | 102/11/23 | 70/71 | 21/24 | 15/16 | 67/120 | 59/78 | 54/65 / 5/13 | 46 | 1/90 / 31/46 | 79/91 |
+| `engine-v3-verify1` | `model_2019-03-01_2019-06-30_verify1` | 136 | 102/11/23 | 70/71 | 21/24 | 15/16 | 67/120 | 59/78 | 54/65 / 5/13 | 46 | 1/90 / 31/46 | 79/91 |
 
 Regola di abbinamento: uno-a-uno, istante del riferimento entro [inizio evento − 2 bin, fine evento + 2 bin] (`benchmark/matching.py`). Il paper (fino al 9 luglio) riporta 100 eventi, GRB 65/81, T90 > 4.096 s 60/68, T90 ≤ 4.096 s 5/13. Le run v2 usano il motore precedente (S calcolato anche sui bin con fondo previsto ≤ 0); flag e validazione sono quelli attuali.
+
+### Classificazione (baseline euristica di Crupi, run di riferimento)
+
+- Contro le classi **tentative** di Crupi (eventi con classe univoca): 87 eventi, accuracy 75/87 (86.2%); GRB recall 97.1%, precision 90.7% (supporto 70).
+- Contro il tipo di trigger GBM degli eventi abbinati, con la mappatura **ipotetica** GRB→GRB, SFLARE→SF, TGF→TGF, LOCLPAR→UNC(LP), UNCERT→UNC: 62/67 (92.5%); per tipo GRB 57/59, LOCLPAR 1/3, SFLARE 4/5. Il tipo GBM non è la natura fisica dell'evento.
+- Matrici complete (conteggi, percentuali per riga e per colonna) ed elenchi per nome di GRB, trigger non-GRB ed eventi di Crupi: `data/runs/2019-03-01_2019-06-30/engine-v3-seed1/RESULTS.md` §6 e §9, CSV in `data/runs/2019-03-01_2019-06-30/engine-v3-seed1/validation/`.
 
 ## 4. Flag di post-processing (`models/flags.py`, step 7; non cambiano l'elenco degli eventi)
 
