@@ -367,3 +367,19 @@ Refactoring senza cambiamenti scientifici, da `f097be3` a `eb452c4` (dettaglio i
   - 104 test verdi;
   - nessun dato cancellato: i 50 file tolti dal disco dal rebase locale sono stati ripristinati dagli oggetti git e verificati con i checksum d'archivio.
 - **In attesa della conferma di Giovanni**: push di `main`, tag `v1.0-baseline`, eliminazione di `fix/baseline-2019` e `thesis` (comandi in REFACTOR_REPORT §8).
+
+## 2026-10-05 — Resoconto automatico completo e run di verifica
+
+- **`RESULTS.md` §6**, generata da `benchmark/report.py` e `benchmark/report_tables.py`:
+  - matrice di confusione contro le classi **tentative** di Crupi, con conteggi, percentuali per riga (recall) e per colonna (precision), recall, precision e supporto per classe, accuracy;
+  - matrice tipo di trigger GBM × classe predetta, con la concordanza di una mappatura **ipotetica** (GRB→GRB, SFLARE→SF, TGF→TGF, LOCLPAR→UNC(LP), UNCERT→UNC);
+  - prima del join, ogni trigger abbinato viene verificato dentro la finestra dell'evento a cui punta: margine 8.192 s, change point non oltre `t_max` + 1 bin prima di `start_met`.
+- **Nuova §9**: elenchi per nome di GRB, trigger non-GRB ed eventi di Crupi, con esito e classe predetta. Anche come CSV in `validation/`: `list_gbm_grb.csv`, `list_gbm_other.csv`, `list_crupi_events.csv`, `classification_metrics.csv`, `gbm_type_vs_class.csv`, `gbm_type_concordance.csv`.
+- **Numeri** di engine-v3-seed1, identici in engine-v3-verify1:
+  - 87 eventi con classe univoca, accuracy 75/87 (86.2%); riga GRB 68/0/0/1/1, GRB recall 97.1% e precision 90.7%;
+  - concordanza GBM 62/67 (92.5%): GRB 57/59, SFLARE 4/5, LOCLPAR 1/3;
+  - GRB del periodo: 59 rivelati, 19 mancati, 15 senza dati;
+  - eventi di Crupi: 91 ritrovati, 4 no;
+  - legacy (engine-v3): concordanza 63/68.
+- **Run di verifica** `engine-v3-verify1`, fatta con `pipeline/pipeline_start.py`: bundle seed1 copiato, step 3–9 eseguiti da zero. `pred/bkg.csv`, `trig/trig.csv`, tutti i file di `results/` e i CSV di validazione sono identici byte per byte a quelli di engine-v3-seed1.
+- Solo lo step 9 è stato rigenerato sulle run esistenti. I checksum di `docs/BASELINE_2019.md` §6 sono invariati. 11 nuovi test, 115 in tutto, verdi.
