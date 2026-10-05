@@ -173,7 +173,7 @@ Aggiungono colonne e non tolgono mai eventi:
 - **B. Tabelle di Crupi**, solo se il periodo tocca 2019-03-01 → 2019-07-09:
   - eventi noti (Tabella 11) e inediti (Tabella 10), separatamente, con la diagnosi dei non ritrovati;
   - S nostro contro S di Crupi;
-  - i casi del §1 di docs/WORKING_RULES.md.
+  - i casi del §1 di `docs/WORKING_RULES.md`.
 - **Sensibilità**: 2 bin, 10 s, 60 s, 1200 s.
 - **Eventi senza controparte**: mai chiamati scoperte; si riportano distanza dalla SAA, riferimento di Crupi più vicino, flag e classe.
 - **Stabilità**: sovrapposizione con le run dello stesso periodo ottenute con un'altra rete.
@@ -210,7 +210,6 @@ Aggiungono colonne e non tolgono mai eventi:
 DeepGRB/
 ├── README.md                    guida d'uso in inglese, crediti, esempio della baseline (blocco generato)
 ├── PROJECT_OVERVIEW.md          questo documento
-├── docs/WORKING_RULES.md                    regole operative, fasi, decisioni scientifiche (italiano)
 ├── LICENSE                      MIT (Crupi, Dilillo; consolidamento Martello)
 ├── requirements.txt             pacchetti con versione fissata (Python 3.9.23)
 ├── .gitignore                   dati, modelli e log fuori dal repo
@@ -294,7 +293,9 @@ DeepGRB/
     ├── DATA_INVENTORY.md        copertura dati del periodo (generato) + data_inventory.csv
     ├── DIFF_UPSTREAM.md         differenze dal codice di Crupi, classificate
     ├── WORKLOG.md               diario di lavoro con i numeri misurati
+    ├── WORKING_RULES.md         regole operative, fasi, decisioni scientifiche (italiano)
     ├── REFACTOR_REPORT.md       resoconto del consolidamento
+    ├── COMMIT_MAP.md            hash dei commit prima e dopo la riscrittura della storia
     └── legacy_crupi/
         ├── README.md
         ├── manual_label.py      etichette manuali di Crupi (2010-11, 2014, 2019): fase XGBoost

@@ -1,19 +1,19 @@
 # Baseline 2019 — documento di riferimento
 
-Generato da `python -m benchmark.baseline_doc --run data/runs/2019-03-01_2019-06-30/engine-v3-seed1 --compare data/runs/2019-03-01_2019-06-30/engine-v3` (codice al commit `9e8e07e`). Numeri, metadati e checksum letti dai file; nessuna cifra scritta a mano.
+Generato da `python -m benchmark.baseline_doc --run data/runs/2019-03-01_2019-06-30/engine-v3-seed1 --compare data/runs/2019-03-01_2019-06-30/engine-v3` (codice al commit `50f4e66`). Numeri, metadati e checksum letti dai file; nessuna cifra scritta a mano.
 
 ## 1. Riferimento
 
 - Periodo: 2019-03-01 → 2019-06-30 (inclusivo). Motore: engine v3 (v3 = v2 con S che ignora i bin con fondo previsto ≤ 0).
-- **Run di riferimento**: `data/runs/2019-03-01_2019-06-30/engine-v3-seed1`; step 5-9 eseguiti dal commit `21e4db1`, predizioni e trigger riusati da `data/runs/2019-03-01_2019-06-30/engine-v2-seed1` (prodotti dal commit `c244881`). Resoconto: `data/runs/2019-03-01_2019-06-30/engine-v3-seed1/RESULTS.md`.
+- **Run di riferimento**: `data/runs/2019-03-01_2019-06-30/engine-v3-seed1`; step 5-9 eseguiti dal commit `544a70d`, predizioni e trigger riusati da `data/runs/2019-03-01_2019-06-30/engine-v2-seed1` (prodotti dal commit `df67708`). Resoconto: `data/runs/2019-03-01_2019-06-30/engine-v3-seed1/RESULTS.md`.
 - **Run di confronto (rete legacy)**: `data/runs/2019-03-01_2019-06-30/engine-v3`, predizioni da `data/runs/2019-03-01_2019-06-30/engine-v2`. Resoconto: `data/runs/2019-03-01_2019-06-30/engine-v3/RESULTS.md`.
 - **Rete di riferimento**: `data/nn_model/bundles/model_2019-03-01_2019-06-30_seed1`
-  - seed 1; periodo 2019-03-01 → 2019-06-30; addestrata il 2026-10-04T07:44:31 dal commit `c244881`;
+  - seed 1; periodo 2019-03-01 → 2019-06-30; addestrata il 2026-10-04T07:44:31 dal commit `df67708`;
   - iperparametri: loss_type=mean, units=2048, epochs=64, lr=0.0008, batch_size=2048, dropout=0.02, validation_split=0.3, split_seed=0;
   - righe fit/validazione/test: 1164300/498987/554429; epoche 64, migliore 57; tempo di fit 6.3 min su /physical_device:GPU:0;
   - MAE di test media sui 36 canali 4.383; controllo di convergenza: assente (training precedente al controllo; val_loss migliore 4.39, contro 20.4 del predittore costante per canale, verifica una tantum del 2026-10-04 in `docs/WORKLOG.md`);
   - versioni: python 3.9.23, tensorflow 2.20.0, keras 3.10.0, numpy 1.26.4, pandas 1.5.3, sklearn 1.6.1.
-- **Rete legacy**: `data/nn_model/bundles/model_03-2019_07-2019_4.4_2026-09-21` (trained by upstream-equivalent code (b0b2802); scaler refitted with split_seed).
+- **Rete legacy**: `data/nn_model/bundles/model_03-2019_07-2019_4.4_2026-09-21` (trained by upstream-equivalent code (477a950); scaler refitted with split_seed).
 
 ## 2. Riproduzione
 

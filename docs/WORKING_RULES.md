@@ -1,7 +1,7 @@
 # DeepGRB — Riproduzione rigorosa dei risultati di Crupi (2019) e baseline affidabile
 
-> Documento operativo: regole di lavoro del progetto. Leggilo tutto prima di toccare il codice.
-> Autore: Giovanni Pio Martello (Poliba, tesi su DeepGRB, cluster ReCaS). Scrivi in italiano con me; codice, commit e nomi di variabili in inglese.
+> Regole di lavoro del progetto: da leggere per intero prima di modificare il codice.
+> Autore: Giovanni Pio Martello (Poliba, tesi su DeepGRB, cluster ReCaS). Documenti di lavoro in italiano; codice, commit e nomi di variabili in inglese.
 
 ## Stato dopo il consolidamento (2026-10-04)
 
@@ -88,7 +88,7 @@ Sono emersi da un'analisi della repo e da me. **Verifica ciascuno nel codice pri
 
 ### 5.1 Significatività σ attribuite agli eventi sbagliati
 Il refactor ha rimosso da `analyze.py` il calcolo delle sigma per evento (vecchia `tableize`). `enrich_events_with_catalog` ora legge `sigma_r0/r1/r2` da `triggers_table.csv` (177 trigger, *prima* del merge) e le unisce su `trig_ids`; gli ID dei 144 eventi dopo il merge non coincidono: circa 140 eventi su 144 ricevono sigma di un altro trigger. Tutte le regole di classificazione dipendono da queste sigma.
-**Fix:** ripristina il calcolo per evento dalla git history (`git show 0cd56c2^:models/analyze.py`), integrando N e B sull'intervallo dell'evento come da paper (§2), e calcola C = max(S_r0,S_r1,S_r2) e il tier CE (R/S/P). Test: per ogni evento, S_r1 ricalcolato a mano da `frg`/`bkg` coincide con la colonna.
+**Fix:** ripristina il calcolo per evento dalla git history (`git show 5d12562^:models/analyze.py`), integrando N e B sull'intervallo dell'evento come da paper (§2), e calcola C = max(S_r0,S_r1,S_r2) e il tier CE (R/S/P). Test: per ogni evento, S_r1 ricalcolato a mano da `frg`/`bkg` coincide con la colonna.
 
 ### 5.2 Il classificatore legge la risposta dal catalogo (data leakage)
 Se `catalog_triggers` contiene "GRB" o "TGF", `resolve_label` restituisce quella classe, e lo step 6 riempie proprio quel campo dal catalogo GBM. La matrice di confusione sugli eventi abbinati è gonfiata per costruzione.
@@ -173,7 +173,7 @@ Obiettivo della tesi: superare la baseline euristica con XGBoost. Regole per qua
 - Tag git `baseline-2019-validated` quando la Fase 3 è accettata.
 - **Accettazione:** una persona nuova esegue i comandi di BASELINE.md e ottiene gli stessi numeri.
 
-## 7. Cosa mi aspetto da te in ogni risposta
+## 7. Formato dei resoconti di lavoro
 
 1. Prima di ogni modifica: una riga su cosa farai e perché.
 2. Dopo: il risultato misurato (numeri reali dai file), non "dovrebbe funzionare".

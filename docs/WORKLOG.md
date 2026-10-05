@@ -7,7 +7,7 @@ Ogni voce: cosa è cambiato, perché, risultato misurato (valori reali dai file)
 ## 2026-10-03 — Fase 0: audit e congelamento (nessuna modifica funzionale)
 
 ### Ambiente
-- Branch `fix/baseline-2019` creato da `thesis` @ `2bf1003`.
+- Branch `fix/baseline-2019` creato da `thesis` @ `bf0d7a1`.
 - Env conda `deepgrb_recas`: Python 3.9.23, numpy 1.26.4, pandas 1.5.3, TensorFlow 2.20.0, Keras 3.10.0, scipy 1.13.1, scikit-learn 1.6.1, gbm-data-tools 1.1.1. `pytest` non installato.
 - Remote `upstream` = `https://github.com/rcrupi/DeepGRB.git`; `upstream/master` = `0d7d82c` = merge-base del fork.
 
@@ -74,9 +74,9 @@ Ogni voce: cosa è cambiato, perché, risultato misurato (valori reali dai file)
 - Conseguenza: i 4 eventi di riferimento di luglio (`2019_96`, `2019_97`, `2019_98`, `2019_99`) sono **fuori ambito** e vanno esclusi dal denominatore in Fase 3. docs/WORKING_RULES.md non è ancora stato aggiornato su questo punto.
 
 ### Modifiche (un commit per bug)
-1. `5d3905f`: `START_DATE`/`END_DATE` inclusivi in `connections/utils/config.py`; `utils/period.py` (`window_days`, `in_window`, `months_to_window`, `days_with_data`). Motivo: download e benchmark derivavano la finestra da etichette di mese con semantiche diverse (§5.5).
-2. `c59221f`: download riscritto (§5.6). `download_days(start, end)` restituisce la colonna `day` (YYMMDD, con alias `id` per `build_table`); retry per giorno **e per file** (un rivelatore alla volta); i file vengono scaricati in staging, validati con i checksum FITS e poi spostati con `os.replace`; i file esistenti non vengono mai riscritti (gbm-data-tools apre i file in append: riscaricare un file esistente lo corromperebbe); verifica finale con log dei giorni incompleti. La pipeline non salta più download e preprocessing quando trova un CSV qualsiasi: preprocessa solo i giorni completi senza tabella.
-3. `8b8208a`: benchmark con finestra esplicita; la verità a terra è limitata ai giorni con dati in `frg`, e quel numero di giorni è il denominatore del FAR.
+1. `7e41318`: `START_DATE`/`END_DATE` inclusivi in `connections/utils/config.py`; `utils/period.py` (`window_days`, `in_window`, `months_to_window`, `days_with_data`). Motivo: download e benchmark derivavano la finestra da etichette di mese con semantiche diverse (§5.5).
+2. `04d7234`: download riscritto (§5.6). `download_days(start, end)` restituisce la colonna `day` (YYMMDD, con alias `id` per `build_table`); retry per giorno **e per file** (un rivelatore alla volta); i file vengono scaricati in staging, validati con i checksum FITS e poi spostati con `os.replace`; i file esistenti non vengono mai riscritti (gbm-data-tools apre i file in append: riscaricare un file esistente lo corromperebbe); verifica finale con log dei giorni incompleti. La pipeline non salta più download e preprocessing quando trova un CSV qualsiasi: preprocessa solo i giorni completi senza tabella.
+3. `8175241`: benchmark con finestra esplicita; la verità a terra è limitata ai giorni con dati in `frg`, e quel numero di giorni è il denominatore del FAR.
 4. Questo commit: `END_DATE` → 2019-06-30; lo script di inventario legge le date dalla config.
 
 ### Test (`python -m unittest discover -s tests -t .`)
@@ -112,19 +112,19 @@ Si segue il **codice upstream** dove differisce dal testo del paper: FOCuS sui r
 - **`t_max`:** nessuna evidenza nei dati; il paper dichiara dmax = 120.4 s. Effetto misurato come sensibilità (vedi sotto).
 
 ### Bug corretti (commit)
-- `caf9920` analyze: sigma per evento (tableize) ripristinate; segmenti con fine inclusa (le durate erano più corte di un bin); offset FOCuS; C e tier CE (regola verificata su 99/99 righe di Crupi).
-- `99e763f` model_nn: timestamp in **UTC** (erano TT, +69.184 s); bundle modello + scaler + metadati; ricetta di training upstream; seed; finestra di date; zeri a NaN in frg e bkg; nessuna sovrascrittura.
-- `255d549` trigger: input in sola lettura; celle non valide passate a FOCuS come NaN (reset delle curve).
-- `3ef1b64` pipeline: cache versionata `data/runs/<start>_<end>/engine-v2/`; via la sanificazione `fillna(10)` e la riscrittura di frg; parametri stampati e salvati in `manifest.json`; batch NN 2048.
-- `1dfb652` **catalogo trigger** (regressione nuova, trovata durante la run): il file rigenerato il 2 ottobre aveva intervalli `trigger_time + timescale` (16 ms–4 s) invece di `time`→`end_time` (circa −135/+480 s, upstream). Con il file sbagliato il training escludeva 8 righe invece di 20 682. Rigenerato da HEASARC: sui 143 trigger del periodo gli intervalli coincidono con upstream (differenza massima 0.0).
+- `aa4a62d` analyze: sigma per evento (tableize) ripristinate; segmenti con fine inclusa (le durate erano più corte di un bin); offset FOCuS; C e tier CE (regola verificata su 99/99 righe di Crupi).
+- `18740c5` model_nn: timestamp in **UTC** (erano TT, +69.184 s); bundle modello + scaler + metadati; ricetta di training upstream; seed; finestra di date; zeri a NaN in frg e bkg; nessuna sovrascrittura.
+- `ad165d9` trigger: input in sola lettura; celle non valide passate a FOCuS come NaN (reset delle curve).
+- `3674b9f` pipeline: cache versionata `data/runs/<start>_<end>/engine-v2/`; via la sanificazione `fillna(10)` e la riscrittura di frg; parametri stampati e salvati in `manifest.json`; batch NN 2048.
+- `38bb236` **catalogo trigger** (regressione nuova, trovata durante la run): il file rigenerato il 2 ottobre aveva intervalli `trigger_time + timescale` (16 ms–4 s) invece di `time`→`end_time` (circa −135/+480 s, upstream). Con il file sbagliato il training escludeva 8 righe invece di 20 682. Rigenerato da HEASARC: sui 143 trigger del periodo gli intervalli coincidono con upstream (differenza massima 0.0).
 - La prima run (con il catalogo sbagliato) è stata interrotta prima di qualunque predizione; bundle e manifest spostati in `data/_archive_20261003/aborted_engine_v2_run/`.
 
 ### Modello
-- Riusato il modello del 2026-09-21, addestrato da codice equivalente a upstream (`b0b2802`) con gli iperparametri del paper (2048 unità, 64 epoche, batch 2048, lr 0.0008, dropout 0.02, split 52/23/25). **Nessun nuovo training.**
+- Riusato il modello del 2026-09-21, addestrato da codice equivalente a upstream (`477a950`) con gli iperparametri del paper (2048 unità, 64 epoche, batch 2048, lr 0.0008, dropout 0.02, split 52/23/25). **Nessun nuovo training.**
 - Scaler ricostruito con lo stesso split deterministico (`random_state=0`). Confronto con le predizioni originali su 69 393 528 celle non sovrascritte: differenza relativa mediana 2.5e-5, massima 5.7e-3 → stesso scaler.
 - Il modello originale di Crupi (2022) **non è disponibile** (nessun `.h5` nei branch upstream).
 
-### Run `engine-v2` (commit motore `1dfb652`, codice pulito)
+### Run `engine-v2` (commit motore `38bb236`, codice pulito)
 - 2 238 398 bin; 310 800 righe mascherate (1036 buchi × 300; prima erano 310 500: upstream lasciava scoperti i lati esterni del primo e dell'ultimo buco); 0 celle a zero.
 - FOCuS: picco 382.6σ; 3453 bin con r1 > 3σ su almeno un rivelatore.
 - 179 trigger → **144 eventi** (R 105, S 18, P 21); durata mediana 72.5 s.
@@ -222,9 +222,9 @@ Uno-a-uno (assegnazione greedy per distanza). Un riferimento è abbinato se il s
 Richiesta: poter riaddestrare la rete 2019 da zero con il codice attuale, in run separate e senza toccare il modello legacy né la run `engine-v2`. Il training lo lancia Giovanni in background; qui **solo modifiche al codice e test** (nessun training reale eseguito).
 
 ### Commit
-- `b28c122` **import pigri di `gbm.finder`.** La libreria fa login FTP su HEASARC già all'import, e veniva importata da `connections/__init__` e `models/__init__`. Qualunque import della config richiedeva quindi la rete, anche con tutti i dati su disco: un nodo offline sarebbe fallito subito. Test: `tests/test_no_ftp_on_import.py` (fallisce con il codice precedente: `FINDER_LOADED`).
-- `d5d0bc7` **report di training su stdout** con `flush=True`: parametri, seed, righe fit/validazione/test, una riga per epoca (loss, val_loss, lr, tempo), MAE per canale del miglior checkpoint, tempo totale. `metadata.json` del bundle aggiunge righe, epoche eseguite, epoca migliore, storia della loss, dispositivi, `training_seconds`, commit git, etichetta. La ricetta (iperparametri, scaler, split, callback di training) non cambia; `train()` rifiuta una cartella di bundle esistente. Test: `tests/test_training_report.py` (riga leggibile prima della fine del processo, con `python -u`).
-- `1b234d4` **run etichettate e training forzato** (`utils/run_options.py`, `pipeline/pipeline_bkg.py`):
+- `c15f18b` **import pigri di `gbm.finder`.** La libreria fa login FTP su HEASARC già all'import, e veniva importata da `connections/__init__` e `models/__init__`. Qualunque import della config richiedeva quindi la rete, anche con tutti i dati su disco: un nodo offline sarebbe fallito subito. Test: `tests/test_no_ftp_on_import.py` (fallisce con il codice precedente: `FINDER_LOADED`).
+- `750e7e6` **report di training su stdout** con `flush=True`: parametri, seed, righe fit/validazione/test, una riga per epoca (loss, val_loss, lr, tempo), MAE per canale del miglior checkpoint, tempo totale. `metadata.json` del bundle aggiunge righe, epoche eseguite, epoca migliore, storia della loss, dispositivi, `training_seconds`, commit git, etichetta. La ricetta (iperparametri, scaler, split, callback di training) non cambia; `train()` rifiuta una cartella di bundle esistente. Test: `tests/test_training_report.py` (riga leggibile prima della fine del processo, con `python -u`).
+- `ec01caa` **run etichettate e training forzato** (`utils/run_options.py`, `pipeline/pipeline_bkg.py`):
   - `DEEPGRB_RUN_LABEL=<etichetta>` → `data/runs/<start>_<end>/engine-v2-<etichetta>/` e bundle `data/nn_model/bundles/model_<start>_<end>_<etichetta>/`; se la cartella esiste, la pipeline si ferma prima di scrivere qualunque cosa.
   - `DEEPGRB_FORCE_TRAIN=1` → training anche sul periodo 2019; il modello legacy non viene mai caricato. Richiede `DEEPGRB_RUN_LABEL` e `DEEPGRB_TRAIN_SEED`.
   - `DEEPGRB_TRAIN_SEED=<intero>` → seed di python/numpy/TensorFlow, salvato nel metadata e nel manifest.
@@ -253,7 +253,7 @@ Osservazione nel log `logs/train_seed1_clean.log`: i parametri dichiarano `lr=0.
 ### Da dove viene
 - **Schedule di upstream**, non nostra. Introdotta da rcrupi nel commit `85542b5` (2023-01-14, "regulate learning rate with a scheduler piecewise") in `models/model_nn.py`:
   `scheduler(epoch)`: `lr*12.5` se `epoch < 4`, `lr*2` se `4 <= epoch < 12`, `lr/2` da `epoch >= 12`.
-- Il nostro `_lr_schedule` in `models/model_nn.py` (commit `99e763f`) ne è la trascrizione identica, agganciata con `LearningRateScheduler`.
+- Il nostro `_lr_schedule` in `models/model_nn.py` (commit `18740c5`) ne è la trascrizione identica, agganciata con `LearningRateScheduler`.
 - Il valore base `lr = 0.0008` viene da `NN_PARAMS` in `pipeline/pipeline_bkg.py`, uguale alla chiamata upstream `nn.train(..., lr=0.0008, ...)` in `pipeline/pipeline_bkg.py` di upstream.
 - Keras numera le epoche da 0, quindi:
   - epoche 1–4 del log → 0.0008 × 12.5 = **1.0e-2**;
@@ -292,8 +292,8 @@ Sola lettura sul motore. Nota: `engine-v2/manifest.json` era già stato modifica
 ## 2026-10-04 — Engine v3, flag SAA, correzioni al report
 
 ### Parte 1 — fondo previsto ≤ 0 (engine v3)
-- `3f93eb5`: in `models/analyze.py::event_significance` un bin è valido solo se il fondo previsto è > 0 su tutti i canali, come in FOCuS. La stessa regola vale nella ricerca del picco di `localize_event`. Test: B = 0 e B < 0 (falliscono sul codice precedente).
-- `94f2a21`: `ENGINE_VERSION = 3` (cambia solo lo step 5).
+- `b11a317`: in `models/analyze.py::event_significance` un bin è valido solo se il fondo previsto è > 0 su tutti i canali, come in FOCuS. La stessa regola vale nella ricerca del picco di `localize_event`. Test: B = 0 e B < 0 (falliscono sul codice precedente).
+- `3897f98`: `ENGINE_VERSION = 3` (cambia solo lo step 5).
   - Una run v3 riusa `pred/` e `trig/` della run v2 corrispondente: symlink dichiarati nel manifest (`reused_from`: run, bundle, commit d'origine); nessun modello caricato.
   - Il manifest registra `predicted_zero_cells`: celle e bin con fondo previsto ≤ 0.
   - Il training forzato non riusa mai.
@@ -301,11 +301,11 @@ Sola lettura sul motore. Nota: `engine-v2/manifest.json` era già stato modifica
 - **Test (a)** (`tests/test_engine_v3_outputs.py`): con la rete legacy (0 celle a zero) `events_table.csv` e `triggers_table.csv` di v3 sono identici byte per byte a v2.
 - **Test (c)** (`python -m benchmark.audit.compare_runs`, output in `benchmark/out/v3-seed1/compare_v2-seed1_v3-seed1.md`): 136 → 136 eventi, 136 coppie, **un solo evento cambia**:
   - **evento 6** (2019-03-07 01:51:23, 41 s, 12 rivelatori): S_r0/S_r1/S_r2/S_C da 880.9/764.9/99.2/880.9 a **29.1/25.7/14.3/29.1**; tempo, durata e rivelatori invariati.
-  - **L'evento 9 non cambia (diversamente dall'atteso):** la sua finestra di S inizia un bin dopo i 3 bin a zero (2019-03-09 04:40:26–34). L'avevo segnalato in ORBIT_ANALYSIS con un margine di ±60 bin troppo largo; corretto in `b50f799`.
+  - **L'evento 9 non cambia (diversamente dall'atteso):** la sua finestra di S inizia un bin dopo i 3 bin a zero (2019-03-09 04:40:26–34). L'avevo segnalato in ORBIT_ANALYSIS con un margine di ±60 bin troppo largo; corretto in `3790913`.
   - Entrambi gli eventi sono attaccati a un tratto di 3 bin in cui la rete seed1 prevede 0 ed esistono solo con quella rete: probabili artefatti, non rimossi dal v3 (che corregge S, non i trigger).
 - Validazione v3: nessun riferimento perso né guadagnato rispetto a v2 (insiemi abbinati identici per Crupi noti, inediti e GBM, per entrambe le reti).
 
-### Parte 2 — flag SAA di post-processing (`4765d74`, `models/saa_flags.py`)
+### Parte 2 — flag SAA di post-processing (`0756c7c`, `models/saa_flags.py`)
 Colonne aggiunte all'output della validazione (`events_flags.csv`); l'elenco degli eventi non cambia.
 
 | run | abbinati flaggati | senza controparte flaggati | `saa_edge_short_passage` | `saa_region_proximity` |
@@ -316,11 +316,11 @@ Colonne aggiunte all'output della validazione (`events_flags.csv`); l'elenco deg
 L'unico abbinato flaggato è l'evento 4 (2019-03-06 06:42), abbinato all'inedito di Crupi `2019_3`, che lui classifica UNC(LP): coerente con il flag.
 
 ### Parte 3 — correzioni
-- `69366c5` validate:
+- `041f280` validate:
   - il seed del modello viene letto da `metadata.json` del bundle (quello della run d'origine se le predizioni sono riusate);
   - "Numero eventi ~100" diventa informativo, con i conteggi per rete (144 legacy, 136 seed1);
   - i limiti riportano la sovrapposizione tra reti (126 coppie, 18 solo legacy, 10 solo seed1), i passaggi SAA brevi non mascherati (45), il bordo nord della SAA e le celle a zero.
-- `c3246c3` training: controllo di convergenza non bloccante.
+- `d1441e0` training: controllo di convergenza non bloccante.
   - Riferimenti calcolati sullo stesso split: MAE di un predittore costante (mediana per canale) e di uno sempre a zero, come in `lr_check.json`.
   - Salvato in `metadata.json` (`convergence`) e stampato nel log; avviso se il val_loss finale non scende sotto metà del riferimento costante.
   - L'addestramento non cambia.
@@ -329,7 +329,7 @@ L'unico abbinato flaggato è l'evento 4 (2019-03-06 06:42), abbinato all'inedito
 - **Da dove vengono 1e-2 (epoche 1–4), 1.6e-3 (5–12) e 4e-4 (da 13).** Dalla **schedule a gradini di upstream** (`LearningRateScheduler`), introdotta da rcrupi nel commit `85542b5` (2023-01-14):
   - `lr*12.5` se `epoch < 4`, `lr*2` se `4 <= epoch < 12`, `lr/2` dopo (epoche numerate da 0);
   - con lr base 0.0008 dà 1.0e-2, 1.6e-3 e 4.0e-4;
-  - il nostro `_lr_schedule` ne è la trascrizione identica (`99e763f`);
+  - il nostro `_lr_schedule` ne è la trascrizione identica (`18740c5`);
   - **non** c'è nessun `ReduceLROnPlateau`, né in upstream né nel nostro codice (verificato con grep su entrambi): le riduzioni sono a epoche fisse, non dipendono dalla loss.
 - **Perché i parametri dichiarano lr=0.0008.**
   - 0.0008 è il lr **base** passato a `train()`: `NN_PARAMS` della pipeline, uguale alla chiamata di upstream.
@@ -346,7 +346,7 @@ L'unico abbinato flaggato è l'evento 4 (2019-03-06 06:42), abbinato all'inedito
 
 ## 2026-10-04 — Consolidamento del framework
 
-Refactoring senza cambiamenti scientifici, da `f097be3` a `eb452c4` (dettaglio in `docs/REFACTOR_REPORT.md`):
+Refactoring senza cambiamenti scientifici, da `e0e8da3` a `2465c0d` (dettaglio in `docs/REFACTOR_REPORT.md`):
 
 - **Struttura**:
   - entry point unico `pipeline/pipeline_bkg.py` con blocco USER SETTINGS (le `DEEPGRB_*` hanno priorità);
@@ -358,7 +358,7 @@ Refactoring senza cambiamenti scientifici, da `f097be3` a `eb452c4` (dettaglio i
   - una sola conversione di tempo e una sola `md_table`;
   - commenti in inglese; CLI tutte con `--run`.
 - **Manifest (difetto 17)**: parametri registrati una volta; modello descritto dal bundle (seed, sha256); una run incoerente si ferma.
-- **Prova di invarianza** sul codice finale (`21e4db1`), rigenerando engine-v3-seed1 ed engine-v3 dai pred/trig delle v2, senza training né FOCuS:
+- **Prova di invarianza** sul codice finale (`544a70d`), rigenerando engine-v3-seed1 ed engine-v3 dai pred/trig delle v2, senza training né FOCuS:
   - `events_table` `eb0207fb…` e `events_classified` `7924b0d6…` identici, come pure `triggers_table`, `events_table_loc`, `78f54718…` e `e9bab9e9…`;
   - identici tutti i CSV di validazione;
   - numeri: 136 (102/11/23), 70/71, 21/24, 67/120; legacy 144 (105/18/21), 70/71, 21/24, 68/120.

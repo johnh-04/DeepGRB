@@ -3,7 +3,7 @@
 Fase 0, audit in sola lettura. Data: 2026-10-03. Branch: `fix/baseline-2019`.
 
 - Upstream: `upstream/master` = `0d7d82c` (coincide con il merge-base del fork).
-- Fork: `HEAD` = `2bf1003` (branch `thesis`).
+- Fork: `HEAD` = `bf0d7a1` (branch `thesis`).
 - Comando: `git diff upstream/master HEAD -- <file>`, più la lettura completa dei file nelle due versioni (le riscritture sono quasi totali, il diff riga per riga non è leggibile).
 
 Classificazione:
@@ -15,12 +15,12 @@ Classificazione:
 
 | Commit | Data | Cosa tocca nei file chiave |
 |---|---|---|
-| `0dd0549` | 2026-09-19 | Porting fedele: `df.append` → `pd.concat`, `.ckpt` → `.keras`, `loss_weights=1.0`, `set` → `list` negli indici, `makedirs`. Nessun cambio di logica. |
-| `b0b2802` | 2026-09-20 | Nessun file in `models/`. |
-| `0cd56c2` | 2026-09-23 | `analyze.py` (5 righe), `trigger.py` (parallelizzazione). |
-| `2bf1003` | 2026-10-03 | **Riscrittura completa** di `analyze.py`, `model_nn.py`, `preprocess.py`, `trigs/focus.py`. |
+| `01bbd8c` | 2026-09-19 | Porting fedele: `df.append` → `pd.concat`, `.ckpt` → `.keras`, `loss_weights=1.0`, `set` → `list` negli indici, `makedirs`. Nessun cambio di logica. |
+| `477a950` | 2026-09-20 | Nessun file in `models/`. |
+| `5d12562` | 2026-09-23 | `analyze.py` (5 righe), `trigger.py` (parallelizzazione). |
+| `bf0d7a1` | 2026-10-03 | **Riscrittura completa** di `analyze.py`, `model_nn.py`, `preprocess.py`, `trigs/focus.py`. |
 
-Conseguenza: gli artefatti su disco hanno provenienze diverse (vedi §6). In particolare il modello e `pred/` sono stati prodotti da codice equivalente a upstream (`0dd0549`), non dal `model_nn.py` attuale.
+Conseguenza: gli artefatti su disco hanno provenienze diverse (vedi §6). In particolare il modello e `pred/` sono stati prodotti da codice equivalente a upstream (`01bbd8c`), non dal `model_nn.py` attuale.
 
 ## 1. `models/trigs/focus.py`
 
@@ -62,7 +62,7 @@ Conseguenza: gli artefatti su disco hanno provenienze diverse (vedi §6). In par
 | M2 | `train(bool_train=False)` cerca `model_<start>_<end>.keras`; upstream cercava `.h5` e sceglieva quello con la loss minima | Regressione (§5.7) | Il modello su disco (`model_03-2019_07-2019_4.4_2026-09-21.h5`) non si può ricaricare. |
 | M3 | Lo scaler viene rifittato ogni volta e non viene salvato | Regressione (§5.7), già presente upstream | Upstream fa lo stesso. Va comunque corretto. |
 | M4 | `prepare`: finestra dei file `[start01, end31]` (mese finale incluso); upstream `[start01, end01)` (mese finale escluso) | Regressione | Con i dati di luglio presenti, il training includerebbe tutto luglio, oltre il 9 luglio. Da allineare alle date esplicite del §5.5. |
-| M5 | Training: `random_state` 0→42; `validation_split` 0.3→0.2; EarlyStopping `patience` 32→20 senza `min_delta=0.01`; **scheduler del learning rate rimosso** (upstream: ×12.5 nelle prime 4 epoche, ×2 fino alla 12, ×0.5 dopo); Nadam `beta_2` 0.99→0.999; nessun file `.txt` con le metriche per canale | Regressione | La configurazione di training non è più quella del paper. Non tocca il modello attuale (addestrato con `0dd0549`). |
+| M5 | Training: `random_state` 0→42; `validation_split` 0.3→0.2; EarlyStopping `patience` 32→20 senza `min_delta=0.01`; **scheduler del learning rate rimosso** (upstream: ×12.5 nelle prime 4 epoche, ×2 fino alla 12, ×0.5 dopo); Nadam `beta_2` 0.99→0.999; nessun file `.txt` con le metriche per canale | Regressione | La configurazione di training non è più quella del paper. Non tocca il modello attuale (addestrato con `01bbd8c`). |
 | M6 | Default `loss_type='median'` (upstream `'mean'`) | Intenzionale/innocua | La pipeline passa sempre `'mean'`. |
 | M7 | `predict`: maschera SAA `range(i−150, i+150)` sull'indice prima del buco; upstream `range(max(ind−150, min_idx), min(ind+150, max_idx))` sull'indice dopo il buco, con clip al primo e all'ultimo buco | Intenzionale/trascurabile | 1 bin di differenza per buco. Spiega il pattern osservato su disco (299/300 bin, primo buco mascherato a metà) → `pred/` viene dal codice upstream-like. |
 | M8 | `predict`: in `bkg` mette a NaN solo le colonne dei rate (upstream: tutta la riga, compresi `met` e `timestamp`) | Intenzionale (miglioramento) | Upstream perde `met`/`timestamp` in `bkg` nelle zone mascherate (osservato su disco: 310 500 NaN in `bkg.met`). |
@@ -90,7 +90,7 @@ Conseguenza: gli artefatti su disco hanno provenienze diverse (vedi §6). In par
 | Artefatto | Prodotto da | Evidenza |
 |---|---|---|
 | `bkg/*.csv` (122) | `preprocess.py` equivalente a upstream | Logica identica (§3). |
-| `nn_model/model_03-2019_07-2019_4.4_2026-09-21.h5` + `.txt` | `model_nn.py` di `0dd0549` (= upstream) | Nome con loss e data, file `.txt` di metriche: formati che il codice attuale non produce. |
+| `nn_model/model_03-2019_07-2019_4.4_2026-09-21.h5` + `.txt` | `model_nn.py` di `01bbd8c` (= upstream) | Nome con loss e data, file `.txt` di metriche: formati che il codice attuale non produce. |
 | `pred/frg_*.csv`, `pred/bkg_*.csv` | `predict` di tipo upstream (21 set), **poi sovrascritti** il 1° ottobre dallo step 4 | Maschera SAA con il pattern upstream (M7); `bkg.met` NaN (M8); **0 NaN** nelle colonne dei rate e 310 500 valori = 10.0 per canale (= 1 035 buchi × 300 bin); colonna `event` aggiunta in `frg`. Timestamp in UTC. |
 | `trig/trig_*.csv`, `trig/offset_*.csv` | `trigger.py` del fork, sugli input già sanificati | 0 NaN su 2 238 398 righe → FOCuS non ha mai azzerato le curve ai bordi SAA; precisione piena (non `%.2f`). |
 | `results/.../triggers_table.csv`, `stat_table.csv` (21 set) | `analyze.py` upstream-like | Colonne di `tableize`: 177 trigger prima del merge. |

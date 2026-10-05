@@ -1,6 +1,6 @@
 # Analisi orbitale degli eventi della baseline 2019
 
-Generato da `python -m benchmark.analysis.orbit_analysis` e `python -m benchmark.analysis.orbit_report` (commit `53e7df1`). Sola lettura sugli output del motore: nessuna run, bundle o parametro modificato. Tutti i numeri vengono dai file in `data/runs/2019-03-01_2019-06-30/engine-v2-seed1/analysis/`.
+Generato da `python -m benchmark.analysis.orbit_analysis` e `python -m benchmark.analysis.orbit_report` (commit `c977a8e`). Sola lettura sugli output del motore: nessuna run, bundle o parametro modificato. Tutti i numeri vengono dai file in `data/runs/2019-03-01_2019-06-30/engine-v2-seed1/analysis/`.
 
 Run analizzate: `engine-v2` (rete `model_03-2019_07-2019_4.4_2026-09-21`) e `engine-v2-seed1` (rete `model_2019-03-01_2019-06-30_seed1`). Eventi: engine-v2 144 (53 senza controparte), engine-v2-seed1 136 (46 senza controparte). "Senza controparte" = né catalogo trigger GBM né tabelle di Crupi (regola primaria di `benchmark/validate.py`).
 

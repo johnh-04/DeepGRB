@@ -1,12 +1,12 @@
 # Consolidamento del framework DeepGRB — resoconto
 
-Consolidamento eseguito il 2026-10-04 sul branch `fix/baseline-2019`, da `f097be3` (tag `baseline-2019-validated` = `4477ae2`, più due commit di documentazione) a `eb452c4`. È un refactoring: la scienza non cambia. I numeri di questo documento vengono da file o da comandi (sezione 10).
+Consolidamento eseguito il 2026-10-04 sul branch `fix/baseline-2019`, da `e0e8da3` (tag `baseline-2019-validated` = `e4675cc`, più due commit di documentazione) a `2465c0d`. È un refactoring: la scienza non cambia. I numeri di questo documento vengono da file o da comandi (sezione 10).
 
 ## 1. Obiettivo e stato di partenza
 
 **Obiettivo** (prompt di consolidamento, §0): un `main` con il minimo indispensabile di file, fedele alla struttura di Crupi (`connections/`, `utils/`, `models/`, `pipeline/`, `data/`), senza l'impalcatura di lavoro; una pipeline semplice e un resoconto scientifico leggibile per ogni run; crediti a Crupi e agli altri autori.
 
-**Stato di partenza** (`f097be3`, descritto in `docs/PROJECT_MAP.md`, ora nella storia git):
+**Stato di partenza** (`e0e8da3`, descritto in `docs/PROJECT_MAP.md`, ora nella storia git):
 
 - 161 file tracciati (315.3 MB), di cui 75 Python, 7645 righe senza i test;
 - un entry point per gli step 1–5, mentre localizzazione, classificazione, flag e validazione si lanciavano a parte da `benchmark/`;
@@ -20,9 +20,9 @@ Le 19 disomogeneità censite sono riprese nella tabella della sezione 3.
 - `git status` pulito;
 - il tag `baseline-2019-validated` esisteva già ed era già sul remote: non è stato ricreato;
 - `git bundle create ../deepgrb_pre_consolidation.bundle --all` (738 MB, fuori dal repo);
-- invarianti registrati prima di ogni modifica (sezione 2, commit `f097be3`).
+- invarianti registrati prima di ogni modifica (sezione 2, commit `e0e8da3`).
 
-**Stato finale** (`eb452c4`):
+**Stato finale** (`2465c0d`):
 
 - 103 file tracciati (5.0 MB), di cui 54 Python, 6190 righe senza i test;
 - 104 test verdi (erano 88);
@@ -63,7 +63,7 @@ Controllo aggiuntivo sul calcolo della validazione, da `benchmark/out/<run>/`:
 
 ### 2.3 Prova
 
-Le due run v3 sono state spostate in `data/_archive_20261004/` (regola 5 di docs/WORKING_RULES.md: si invalida una cache spostando, mai cancellando). Poi la pipeline consolidata le ha rigenerate con il **codice finale** (commit `21e4db1`):
+Le due run v3 sono state spostate in `data/_archive_20261004/` (regola 5 di docs/WORKING_RULES.md: si invalida una cache spostando, mai cancellando). Poi la pipeline consolidata le ha rigenerate con il **codice finale** (commit `544a70d`):
 
 - step 3 come symlink a pred/ e trig/ delle run v2, senza training e senza FOCuS;
 - step 4 saltato;
@@ -87,39 +87,39 @@ Una prima rigenerazione era stata fatta sul codice intermedio (`bf188c2`, stesso
 
 ## 3. Tabella file per file
 
-Difetti numerati come in `docs/PROJECT_MAP.md` (storia git, `f097be3`).
+Difetti numerati come in `docs/PROJECT_MAP.md` (storia git, `e0e8da3`).
 
 | file (prima → dopo) | azione | motivo | difetto | commit |
 |---|---|---|---|---|
-| `scripts/` (12 file), `pipeline/script_to_latex.py`, `pipeline/run_classification.txt`, `fetch_fermi_triggers.py`, `readme.txt` | rimossi (`git rm`) | legacy con percorsi vecchi, non funzionanti | 7, 8, 9 | `07f0774` |
-| `models/load_data.py`, `models/utils/config.py`, `models/utils/GBMutils.py`, `models/trigs/paramtrig.py`, `utils/config.py` | rimossi | non usati dalla pipeline (GBMutils riscriveva `frg`) | 6, 7 | `07f0774` |
-| `benchmark/_obsolete/` | rimosso | vecchio log INVALIDO e sandbox; restano nella storia e al tag | 2 | `07f0774` |
-| `connections/utils/m_check/`, `data_test/` | non più tracciati, lasciati su disco | modelli legacy da 77 e 2×77 MB | 6, 9 | `07f0774` |
-| `pipeline/manual_label.py`, `pipeline/train_classifier.py` → `docs/legacy_crupi/` | spostati, con README di una riga ciascuno | servono alla fase XGBoost (etichette 2010-11/2014/2019; random forest di Crupi da battere) | 8 | `07f0774` |
-| `models/utils/losses.py` → `models/losses.py` | spostato; commento in inglese | `models/utils/` resta vuota | 12 | `07f0774` |
-| `connections/utils/config.py` | riscritto: configurazione **unica** (cartelle, versione del motore, tutti i parametri scientifici con gli stessi valori, `engine_parameters()`, `run_dir()`, `run_period()`); **nessuna data** | prima: date, costanti legacy e parametri sparsi | 7, 16 | `3659ea9` |
-| `utils/logs.py` | nuovo: logging unico nel formato di Crupi (`%(asctime)s %(levelname)-8s %(message)s`), intestazione, titoli degli step, durate | sostituisce 25 `basicConfig` | 11 | `3659ea9` |
-| `models/*.py`, `connections/fermi_data_tools.py` | logger di modulo; costanti da config; niente date di default | — | 11, 13, 16 | `3659ea9` |
-| `models/saa_flags.py` → `models/flags.py` | rinominato; `flag_events()` = step 7; `event_start_met()` condiviso; CLI `--run` | i flag non sono solo SAA e diventano uno step del motore | 1, 3 | `a0b8f49`, `c0b8906` |
-| `utils/run_options.py` | impostazioni con priorità all'ambiente, ripresa delle run esistenti (`resume`), helper del manifest (modello, checksum del bundle, confronto dei parametri) | sicurezza e difetto 17 | 16, 17 | `ee41511` |
-| `benchmark/classify.py` → `models.event_classifier.classify_events` | integrato come step 6 (stesse colonne) | — | 1, 2 | `3872e39` |
-| `benchmark/analysis/lr_check.py`, `benchmark/audit/sensitivity_tmax.py` | rimossi | analisi una tantum, risultati nel WORKLOG; la run `engine-v2-sens-tmax29` resta | 2 | `07f0774`, `3872e39` |
-| `benchmark/validate.py` (630 righe) | scorporato: solo calcolo → `<run>/validation/` (CSV + `summary.json`) | calcolo e scrittura erano mescolati | 4, 14 | `3124065` |
-| `benchmark/report.py` | nuovo: `md_table` unica, `<run>/RESULTS.md`, `docs/RUNS.md` | — | 4 | `3124065`, `49ae617` |
-| `pipeline/pipeline_bkg.py` | riscritto: USER SETTINGS, tabella di stato, 9 step che si saltano da soli, `--jobs`, `--dry-run`, manifest corretto | entry point unico | 1, 16, 17 | `2876911`, `8c1ba6b`, `21e4db1` |
-| `models/loc/localization_class.py` + `pyswarms_logging.yaml` | pyswarms reso innocuo per il logging; docstring in inglese | pyswarms riconfigurava il logging a ogni ottimizzatore e scriveva `./report.log`: era l'origine di quel file | 11, 12 | `cd06495` |
-| `utils/keys.py` | commenti in inglese | — | 12 | `a5d42fd` |
-| `benchmark/audit/*` | `--run` (periodo dal manifest), logging | — | 15 | `d7e062d`, `21e4db1` |
-| `benchmark/analysis/*` | `--run <riferimento> --compare <confronto>`, ruoli neutri, output in `<run>/analysis/`, `md_table` unica, id degli eventi presi dai flag | run fisse nel codice; `md` duplicata | 4, 15 | `f677f55`, `c46cf31`, `539ac13` |
-| `models/model_nn.met_to_utc`, `fermi_data_tools._iso_to_met` | sostituite da `utils/fermi_time` | identiche su 2 238 398 bin e su tutto il catalogo trigger | 5 | `11aeae8` |
-| `benchmark/baseline_doc.py` | `--run/--compare`, legge le cartelle di run, scrive anche il blocco d'esempio del README | — | 14, 15 | `b554769`, `9769c98`, `21e4db1` |
-| `requirements.txt` | pin tenuti per ciò che si importa e per le sue dipendenze; tolti keras-tuner, shap, numba, llvmlite, cloudpickle, seaborn, sqlalchemy; tabulate non aggiunto; tsfel/xgboost come commento | — | 19 | `af57763` |
-| `.gitignore` + untrack | dati, modelli, log fuori dal repo; `data/runs/*/*/{pred,trig}` ignorati | nessun file > 5 MB | 9, 18 | `8f2d5a1` |
-| `README.md`, `LICENSE`, `data/README.md` | README in inglese; crediti mantenuti; riga di copyright di Giovanni aggiunta | — | 10 | `e07a222` |
-| `docs/PROJECT_MAP.md`, `docs/BASELINE.md` | rimossi (confluiti) | sezione 9 | — | `e39e5c6` |
-| `docs/WORKING_RULES.md` | sezione "Stato dopo il consolidamento" | — | — | `98d3c97` |
-| `docs/DATA_INVENTORY.md`, `docs/ORBIT_ANALYSIS.md`, `docs/BASELINE_2019.md`, `docs/RUNS.md` | rigenerati con gli strumenti nuovi (stessi numeri) | — | — | `53e7df1`, `6897094`, `eb452c4` |
-| `data/runs/2019-03-01_2019-06-30/*` | manifest, `results/`, `validation/`, `RESULTS.md` (e `analysis/` di engine-v2-seed1) versionati; v3 rigenerate | — | 14, 18 | `41418a4` |
+| `scripts/` (12 file), `pipeline/script_to_latex.py`, `pipeline/run_classification.txt`, `fetch_fermi_triggers.py`, `readme.txt` | rimossi (`git rm`) | legacy con percorsi vecchi, non funzionanti | 7, 8, 9 | `1a204a5` |
+| `models/load_data.py`, `models/utils/config.py`, `models/utils/GBMutils.py`, `models/trigs/paramtrig.py`, `utils/config.py` | rimossi | non usati dalla pipeline (GBMutils riscriveva `frg`) | 6, 7 | `1a204a5` |
+| `benchmark/_obsolete/` | rimosso | vecchio log INVALIDO e sandbox; restano nella storia e al tag | 2 | `1a204a5` |
+| `connections/utils/m_check/`, `data_test/` | non più tracciati, lasciati su disco | modelli legacy da 77 e 2×77 MB | 6, 9 | `1a204a5` |
+| `pipeline/manual_label.py`, `pipeline/train_classifier.py` → `docs/legacy_crupi/` | spostati, con README di una riga ciascuno | servono alla fase XGBoost (etichette 2010-11/2014/2019; random forest di Crupi da battere) | 8 | `1a204a5` |
+| `models/utils/losses.py` → `models/losses.py` | spostato; commento in inglese | `models/utils/` resta vuota | 12 | `1a204a5` |
+| `connections/utils/config.py` | riscritto: configurazione **unica** (cartelle, versione del motore, tutti i parametri scientifici con gli stessi valori, `engine_parameters()`, `run_dir()`, `run_period()`); **nessuna data** | prima: date, costanti legacy e parametri sparsi | 7, 16 | `6cb32c9` |
+| `utils/logs.py` | nuovo: logging unico nel formato di Crupi (`%(asctime)s %(levelname)-8s %(message)s`), intestazione, titoli degli step, durate | sostituisce 25 `basicConfig` | 11 | `6cb32c9` |
+| `models/*.py`, `connections/fermi_data_tools.py` | logger di modulo; costanti da config; niente date di default | — | 11, 13, 16 | `6cb32c9` |
+| `models/saa_flags.py` → `models/flags.py` | rinominato; `flag_events()` = step 7; `event_start_met()` condiviso; CLI `--run` | i flag non sono solo SAA e diventano uno step del motore | 1, 3 | `93065fc`, `7305b3a` |
+| `utils/run_options.py` | impostazioni con priorità all'ambiente, ripresa delle run esistenti (`resume`), helper del manifest (modello, checksum del bundle, confronto dei parametri) | sicurezza e difetto 17 | 16, 17 | `3c5f37f` |
+| `benchmark/classify.py` → `models.event_classifier.classify_events` | integrato come step 6 (stesse colonne) | — | 1, 2 | `14e5941` |
+| `benchmark/analysis/lr_check.py`, `benchmark/audit/sensitivity_tmax.py` | rimossi | analisi una tantum, risultati nel WORKLOG; la run `engine-v2-sens-tmax29` resta | 2 | `1a204a5`, `14e5941` |
+| `benchmark/validate.py` (630 righe) | scorporato: solo calcolo → `<run>/validation/` (CSV + `summary.json`) | calcolo e scrittura erano mescolati | 4, 14 | `c1d20a6` |
+| `benchmark/report.py` | nuovo: `md_table` unica, `<run>/RESULTS.md`, `docs/RUNS.md` | — | 4 | `c1d20a6`, `f4560e9` |
+| `pipeline/pipeline_bkg.py` | riscritto: USER SETTINGS, tabella di stato, 9 step che si saltano da soli, `--jobs`, `--dry-run`, manifest corretto | entry point unico | 1, 16, 17 | `f040d75`, `6c657f9`, `544a70d` |
+| `models/loc/localization_class.py` + `pyswarms_logging.yaml` | pyswarms reso innocuo per il logging; docstring in inglese | pyswarms riconfigurava il logging a ogni ottimizzatore e scriveva `./report.log`: era l'origine di quel file | 11, 12 | `ee74676` |
+| `utils/keys.py` | commenti in inglese | — | 12 | `5836449` |
+| `benchmark/audit/*` | `--run` (periodo dal manifest), logging | — | 15 | `6574f20`, `544a70d` |
+| `benchmark/analysis/*` | `--run <riferimento> --compare <confronto>`, ruoli neutri, output in `<run>/analysis/`, `md_table` unica, id degli eventi presi dai flag | run fisse nel codice; `md` duplicata | 4, 15 | `f332e79`, `26c2985`, `3aa4acc` |
+| `models/model_nn.met_to_utc`, `fermi_data_tools._iso_to_met` | sostituite da `utils/fermi_time` | identiche su 2 238 398 bin e su tutto il catalogo trigger | 5 | `46b0cca` |
+| `benchmark/baseline_doc.py` | `--run/--compare`, legge le cartelle di run, scrive anche il blocco d'esempio del README | — | 14, 15 | `43b6535`, `a35bd28`, `544a70d` |
+| `requirements.txt` | pin tenuti per ciò che si importa e per le sue dipendenze; tolti keras-tuner, shap, numba, llvmlite, cloudpickle, seaborn, sqlalchemy; tabulate non aggiunto; tsfel/xgboost come commento | — | 19 | `9c6fa54` |
+| `.gitignore` + untrack | dati, modelli, log fuori dal repo; `data/runs/*/*/{pred,trig}` ignorati | nessun file > 5 MB | 9, 18 | `e5603db` |
+| `README.md`, `LICENSE`, `data/README.md` | README in inglese; crediti mantenuti; riga di copyright di Giovanni aggiunta | — | 10 | `8ce767a` |
+| `docs/PROJECT_MAP.md`, `docs/BASELINE.md` | rimossi (confluiti) | sezione 9 | — | `d8fa9f4` |
+| `docs/WORKING_RULES.md` | sezione "Stato dopo il consolidamento" | — | — | `ac820ec` |
+| `docs/DATA_INVENTORY.md`, `docs/ORBIT_ANALYSIS.md`, `docs/BASELINE_2019.md`, `docs/RUNS.md` | rigenerati con gli strumenti nuovi (stessi numeri) | — | — | `c977a8e`, `f911a28`, `2465c0d` |
+| `data/runs/2019-03-01_2019-06-30/*` | manifest, `results/`, `validation/`, `RESULTS.md` (e `analysis/` di engine-v2-seed1) versionati; v3 rigenerate | — | 14, 18 | `25c1fd8` |
 | test | +16 test: settings e periodo, ripresa delle run, manifest/checksum, step 6, `event_start_met`, dry-run della pipeline, implementazione unica del tempo | un test per ogni correzione | — | vari |
 
 Stato dei 19 difetti:
@@ -322,8 +322,8 @@ Commit locali, nessun push. Comandi locali usati:
 ```bash
 git bundle create ../deepgrb_pre_consolidation.bundle --all
 git rm / git rm --cached / git mv ...      # sezione 3
-GIT_SEQUENCE_EDITOR="sed -i ..." git rebase -i f097be3   # vedi sotto
-git branch main eb452c4                    # dopo il commit di questo report: main = HEAD
+GIT_SEQUENCE_EDITOR="sed -i ..." git rebase -i e0e8da3   # vedi sotto
+git branch main 2465c0d                    # dopo il commit di questo report: main = HEAD
 ```
 
 Il **rebase locale** (non interattivo, prima di qualunque push) ha corretto tre commit che contenevano file in più:
@@ -332,14 +332,14 @@ Il **rebase locale** (non interattivo, prima di qualunque push) ha corretto tre 
 - `benchmark/analysis/out/` nel commit degli strumenti orbitali;
 - due cancellazioni di documenti nel commit di `baseline_doc`.
 
-**Incidente durante il rebase.** Riapplicando i `git rm --cached` di `8f2d5a1`, git ha rimosso dal disco le copie di lavoro di 50 file tracciati in precedenza:
+**Incidente durante il rebase.** Riapplicando i `git rm --cached` di `e5603db`, git ha rimosso dal disco le copie di lavoro di 50 file tracciati in precedenza:
 
 - il modello legacy `.h5` e lo scaler legacy;
 - `gbm_burst_catalog.db` e i due CSV d'archivio;
 - `data/results/frg_03-2019_07-2019/*.csv` e `benchmark/out/**`;
 - `data_test/` e il symlink `pred` di `engine-v2-sens-tmax29`.
 
-Sono stati ripristinati subito, byte per byte, dagli oggetti git (`git restore --source=f097be3 --worktree --pathspec-from-file=...`, senza toccare l'indice), e verificati con i checksum dell'archivio:
+Sono stati ripristinati subito, byte per byte, dagli oggetti git (`git restore --source=e0e8da3 --worktree --pathspec-from-file=...`, senza toccare l'indice), e verificati con i checksum dell'archivio:
 
 - `sha256sum -c` di `data/_archive_20261003/SHA256SUMS_results.txt`: tutti OK;
 - `SHA256SUMS_inputs_inplace.txt`: tutti OK salvo `gbm_trig_catalog.csv`, ricostruito di proposito in Fase 1; la versione precedente in archivio ha il checksum registrato.
@@ -374,7 +374,7 @@ git push origin --delete fix/baseline-2019 thesis
 
 **Scelte**
 
-- **PROJECT_MAP.md** non è stato rigenerato: descriveva lo stato *prima* del consolidamento. La struttura attuale è nel README e nella sezione 4, l'elenco dei difetti con la loro sorte nella sezione 3; l'originale resta nella storia git (`f097be3`).
+- **PROJECT_MAP.md** non è stato rigenerato: descriveva lo stato *prima* del consolidamento. La struttura attuale è nel README e nella sezione 4, l'elenco dei difetti con la loro sorte nella sezione 3; l'originale resta nella storia git (`e0e8da3`).
 - **BASELINE.md** era ridondante con il README (comandi) e con BASELINE_2019.md (riproduzione), quindi è stato rimosso. **DIFF_UPSTREAM.md** è stato tenuto, perché è l'unico posto in cui le differenze dal codice di Crupi sono classificate.
 - **Lingua dei resoconti generati.** `RESULTS.md`, `RUNS.md` e `BASELINE_2019.md` sono in italiano, come gli altri documenti di lavoro; README e codice sono in inglese.
 - **Analisi una tantum.** `zero_prediction.py` è stato tenuto perché alimenta `ORBIT_ANALYSIS.md` §5b; `lr_check.py` e `sensitivity_tmax.py` sono stati rimossi, con i risultati nel WORKLOG e la run `engine-v2-sens-tmax29`.
