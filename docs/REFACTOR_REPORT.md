@@ -317,6 +317,8 @@ Estratto reale:
 
 ## 8. Operazioni git
 
+> I comandi remoti di questa sezione sono superati dalla sezione 11 (storia riscritta il 2026-10-05).
+
 Commit locali, nessun push. Comandi locali usati:
 
 ```bash
@@ -422,3 +424,107 @@ python -m benchmark.report --index
 python -m compileall -q connections utils models pipeline benchmark tests
 git ls-files -z | xargs -0 du -k | awk '$1 > 5120'               # vuoto
 ```
+
+## 11. Resoconto completo e pulizia della storia (2026-10-05)
+
+### 11.1 Resoconto automatico (`benchmark/report.py`, step 9)
+
+| cosa | dove | numeri di engine-v3-seed1 (identici in engine-v3-verify1) |
+|---|---|---|
+| Matrice di confusione contro le classi **tentative** di Crupi: conteggi, % per riga (recall), % per colonna (precision), recall/precision/supporto per classe, accuracy | `RESULTS.md` §6.1, `validation/classification_metrics.csv` | 87 eventi con classe univoca; riga GRB 68/0/0/1/1; accuracy 75/87 (86.2%); GRB recall 97.1%, precision 90.7% |
+| Tipo di trigger GBM × classe predetta (conteggi, % per riga) e concordanza con la mappatura **ipotetica** GRB→GRB, SFLARE→SF, TGF→TGF, LOCLPAR→UNC(LP), UNCERT→UNC | `RESULTS.md` §6.2, `validation/gbm_type_vs_class.csv`, `gbm_type_concordance.csv` | 62/67 (92.5%): GRB 57/59, SFLARE 4/5, LOCLPAR 1/3; legacy 63/68 |
+| Controllo del join: ogni trigger abbinato cade nella finestra dell'evento a cui punta `event` (margine 8.192 s; change point al massimo `t_max` + 1 bin prima di `start_met`), altrimenti `JoinError` | `benchmark/report_tables.check_gbm_join` | superato su tutte le 6 run |
+| Elenchi per nome: GRB e trigger non-GRB del catalogo GBM (esito rivelato / mancato / senza dati, evento, classe), eventi di Crupi (ritrovato / non ritrovato + diagnosi, classe) | `RESULTS.md` §9, `validation/list_gbm_grb.csv`, `list_gbm_other.csv`, `list_crupi_events.csv` | GRB: 59 rivelati, 19 mancati, 15 senza dati; non-GRB: 8 rivelati, 34 mancati, 8 senza dati; Crupi: 91 ritrovati, 4 no |
+
+Note sul resoconto:
+
+- Il tipo GBM viene dichiarato per quello che è: **non** è la natura fisica dell'evento.
+- Il classificatore continua a non leggere colonne del catalogo (`tests/test_classifier.py`).
+- 11 nuovi test su dati sintetici (`tests/test_report_tables.py`): percentuali per riga e per colonna, metriche per classe, join corretto e join sbagliato, elenchi per nome.
+- Sulle run esistenti è stato rigenerato solo lo step 9; i checksum di `BASELINE_2019.md` §6 sono invariati.
+- `pipeline/pipeline_start.py` esegue gli step 3–9 su una cartella nuova, con una copia del bundle; il `--dry-run` non copia nulla. È documentato nel README.
+- La run `engine-v3-verify1` ha `pred/bkg.csv`, `trig/trig.csv`, `results/` e i CSV di validazione identici byte per byte a quelli di engine-v3-seed1.
+
+### 11.2 Pulizia dei riferimenti
+
+Backup prima di iniziare: `git bundle create ../deepgrb_pre_scrub2.bundle --all` (810 MB, fuori dal repo) e tag **locale** `backup/pre-scrub2` (`9e8e07e`), da non pubblicare. Il bundle e quel tag contengono ancora i riferimenti originali.
+
+| trovato (inventario in sola lettura) | intervento |
+|---|---|
+| Il vecchio file delle regole di lavoro alla radice del repo, in 4 versioni della storia | rinominato in `docs/WORKING_RULES.md` in **tutta** la storia (`git filter-repo --path-rename`); intestazione e §7 riscritte in forma neutra; il file locale con quel nome, se serve, è escluso con `.git/info/exclude` (non con `.gitignore`, che è tracciato e avrebbe reintrodotto il nome) |
+| 61 righe distinte in 846 blob storici: riferimenti a quel file (`… §2`, `§6`, …) in codice, test, documenti e `RESULTS.md` generati | `--replace-text`: il nome del vecchio file → `docs/WORKING_RULES.md`, in ogni versione |
+| 3 frasi che nominavano lo strumento nelle regole di lavoro ("Documento operativo per …", "analisi della repo (…)", "delegate a …") | riformulate in ogni versione; il contenuto tecnico è invariato |
+| 2 righe di messaggi di commit con il nome del file | `--replace-message` con le stesse regole |
+| Righe di attribuzione (`Co-Authored-By`, righe di sessione, "Generated with"): **nessuna** (la riscrittura precedente le aveva già tolte) | — |
+| Autori o committer diversi dalle persone del progetto: **nessuno** | — |
+| Tag annotati `baseline-2019-validated`, `v1.0-baseline`: messaggi senza riferimenti | ricreati da filter-repo sui commit corrispondenti (`e4675cc`, `a41e21d`), stesso messaggio e stesso tagger |
+| Hash citati nei documenti, riferiti a commit che la riscrittura precedente aveva già cambiato | tradotti con `.git/filter-repo/commit-map` (che concatena le due riscritture) in un commit finale; tabella completa in `docs/COMMIT_MAP.md`. Restano originali i due commit di Crupi citati (`0d7d82c`, `85542b5`), validi upstream, e `bf188c2`, intermedio mai pubblicato |
+| Remote `origin` rimosso da filter-repo | ricreato (`https://github.com/johnh-04/DeepGRB.git`), senza fetch |
+
+**Cose emerse durante il lavoro**
+
+- La riscrittura precedente (fatta prima di questo lavoro) aveva già cambiato gli hash di 131 commit di Crupi e degli altri autori originali: aveva tolto le firme GPG e aggiunto l'a capo finale ai messaggi. Tree, autore e testo sono identici: per esempio la punta di upstream `0d7d82c` è diventata `18bfe63`, con lo stesso tree `14430d4`. Il `master` **sul remoto** è ancora quello originale (`0d7d82c`); il `master` locale (`01bbd8c`) non è stato toccato da questa pulizia (verificato: nessun suo commit conteneva riferimenti).
+- Sul remoto `main` era un commit più avanti di quello locale: `5ad3296`, modifica del README fatta su GitHub ("master's thesis" → "bachelor's thesis"). Per non perderla col push forzato è stata riportata su `main` locale (commit `c48cb59`, autore Giovanni Pio Martello, data originale).
+- Hash dentro file generati (`manifest.json`, `metadata.json`, `summary.json`, `RESULTS.md`): non riscritti a mano, si riferiscono ai commit precedenti alla riscrittura. Si traducono con `docs/COMMIT_MAP.md`.
+
+**Non fatto**
+
+- Nessun push e nessuna modifica al remoto.
+- `master`, `fix/baseline-2019` e `thesis` restano locali e non vanno pubblicati (`fix/baseline-2019` = `a41e21d`, `thesis` = `bf0d7a1`, `master` = `01bbd8c`).
+- Le copie del vecchio contenuto restano raggiungibili: nel bundle di backup, nel tag locale `backup/pre-scrub2` e su GitHub per SHA finché il supporto non le elimina.
+
+### 11.3 Verifica
+
+`$NOMI` è il pattern dei nomi da escludere (lo strumento e il suo produttore, in OR, senza distinzione di maiuscole), definito nella shell e non scritto nel repo.
+
+```
+$ git log --exclude=refs/tags/backup/* --all --format=%B | grep -ic "$NOMI"
+0
+$ git log --all --format=%B | grep -ic "$NOMI"          # include il tag locale di backup
+2
+$ git grep -il "$NOMI" $(git rev-list main) | wc -l
+0
+$ git grep -il "$NOMI" $(git rev-list fix/baseline-2019 thesis master) | wc -l
+0
+$ git ls-files | grep -ic "$NOMI"
+0
+$ git log --exclude=refs/tags/backup/* --all --format=%B | grep -ic "co-authored-by\|-session:\|generated with \["
+0
+$ tag annotati: baseline-2019-validated -> e4675cc, v1.0-baseline -> a41e21d, 0 occorrenze
+$ git diff --name-status backup/pre-scrub2 main -- data benchmark | cut -f1 | sort | uniq -c
+     53 A          # nuove tabelle di validation/ e la run engine-v3-verify1
+     10 M          # baseline_doc.py, report.py, validate.py (2 commenti), 2 README d'archivio, 5 RESULTS.md
+$ CSV preesistenti modificati sotto data/runs: 0;  results/ modificati: 0 (5 aggiunti, tutti di engine-v3-verify1)
+$ checksum di docs/BASELINE_2019.md §6 ricalcolati sui file: 16 OK; §6 identica a quella del backup
+$ python -m unittest discover -s tests -t .
+Ran 115 tests ... OK
+$ python -m compileall -q connections utils models pipeline benchmark tests
+exit 0
+$ DEEPGRB_RUN_LABEL=seed1 DEEPGRB_SKIP_DOWNLOAD=1 python -u pipeline/pipeline_bkg.py --dry-run
+  -> manifest coherent: engine v3, period, parameters, bundle checksum 0eae86f65d97...
+  ✔ 1 … ✔ 9; All steps are complete and coherent with the manifest: nothing to do.
+  events 136 (R 102, S 11, P 23); GBM 67/120; Crupi known 70/71, unknown 21/24; total time 0.1 s (≈1 s con l'avvio di Python)
+$ git ls-files -z | xargs -0 du -k | awk '$1>5120' | wc -l
+0
+```
+
+### 11.4 Pubblicazione (da eseguire solo dopo la conferma di Giovanni)
+
+Stato del remoto (`git ls-remote origin`, 2026-10-05):
+
+- `main` = `5ad3296`;
+- `master` = `0d7d82c` (originale di Crupi);
+- `baseline-2019-validated` → `c670a84`;
+- `v1.0-baseline` → `a30bbf2`.
+
+```bash
+git push --force-with-lease=main:5ad3296a9230fdc0246067149f094cb97249c1ec origin main
+git push --force origin baseline-2019-validated v1.0-baseline
+# NON usare --tags/--all: pubblicherebbero backup/pre-scrub2, master, thesis, fix/baseline-2019
+```
+
+Poi su GitHub:
+
+1. **Branch predefinito**: Settings → Branches → `main`. Oggi `HEAD` del remoto punta già a `main`: va solo verificato.
+2. **Commit vecchi ancora raggiungibili**: restano accessibili via URL per SHA (es. `5ad3296`, `a30bbf2`) e nelle viste in cache. Va aperta una richiesta al supporto GitHub (modulo "Remove data from a repository", cancellazione dei commit non più referenziati e delle viste in cache), indicando il repository `johnh-04/DeepGRB`.
+3. **Altri cloni** (per esempio quello locale su macOS) vanno riallineati con `git fetch origin && git reset --hard origin/main` oppure riclonati, altrimenti un push successivo reintroduce la vecchia storia.
