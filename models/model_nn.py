@@ -16,7 +16,6 @@ import json
 import logging
 import platform
 import random
-import shutil
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -197,12 +196,6 @@ class ModelNN:
         X = self.df_data.loc[self.index_date, self.col_selected].astype("float32")
         return train_test_split(X, y, test_size=0.25, random_state=SPLIT_SEED, shuffle=True)
 
-    def fit_scaler(self) -> StandardScaler:
-        """StandardScaler on the training split (deterministic: same data -> same scaler)."""
-        X_train, _, _, _ = self._split()
-        self.scaler = StandardScaler().fit(X_train)
-        return self.scaler
-
     # --------------------------------------------------------------- training
     def train(self, bundle_dir: Path, seed: int = 0, loss_type: str = "mean", units: int = 2048,
               epochs: int = 64, lr: float = 0.0008, bs: int = 2048, dropout_rate: float = 0.02,
@@ -348,22 +341,6 @@ class ModelNN:
                                custom_objects={"loss_median": loss_median, "loss_max": loss_max})
         self.scaler = joblib.load(bundle_dir / "scaler.joblib")
         logger.info(f"Loaded model bundle {bundle_dir.name} (source: {self.metadata.get('source')})")
-
-    def bundle_from_legacy_h5(self, h5_path: Path, bundle_dir: Path) -> None:
-        """
-        Wraps a model trained by the upstream code (which did not save its scaler) into a bundle.
-        The scaler is refitted on the same deterministic training split; prepare() must have run
-        on the same period and inputs used for training.
-        """
-        h5_path, bundle_dir = Path(h5_path), Path(bundle_dir)
-        self.nn_r = load_model(str(h5_path), compile=False, custom_objects={"loss_median": loss_median, "loss_max": loss_max})
-        self.fit_scaler()
-        bundle_dir.mkdir(parents=True, exist_ok=False)
-        shutil.copy2(h5_path, bundle_dir / "model.h5")
-        self.metadata = {"source": "legacy_h5", "legacy_file": h5_path.name,
-                         "note": "trained by upstream-equivalent code (b0b2802); scaler refitted with split_seed",
-                         "split_seed": SPLIT_SEED}
-        self.save_bundle(bundle_dir, model_file="model.h5")
 
     # -------------------------------------------------------------- inference
     def predict(self, frg_path: Path, bkg_path: Path, time_to_del: int = SAA_EXCLUSION_BINS) -> Tuple[Path, Path]:

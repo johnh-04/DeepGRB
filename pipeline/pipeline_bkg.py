@@ -55,7 +55,7 @@ import pandas as pd
 
 from connections.utils.config import (DATA_DIR, ENERGY_RANGES_KEV, ENGINE_VERSION, FOCUS_MU_MIN, FOCUS_T_MAX_BINS,
                                       FOLD_BKG, FOLD_CSPEC_POS, FOLD_NN, FOLD_POSHIST, GBM_TRIG_DB, LOGS_DIR, NN_PARAMS,
-                                      PRED_TRIG_COMPATIBLE_SINCE, SAA_EXCLUSION_BINS, TRIGGER_THRESHOLD_SIGMA,
+                                      SAA_EXCLUSION_BINS, TRIGGER_THRESHOLD_SIGMA,
                                       engine_parameters, run_dir)
 from utils.logs import detail, format_duration, header, log, setup_logging, step, summary
 from utils.period import window_days
@@ -175,9 +175,7 @@ class Pipeline:
     def model_entry(self) -> dict:
         """The model that produces (or produced) this run's predictions, with seed and checksum."""
         o = self.opts
-        if o.mode == "reuse_pred":
-            bundle = manifest_model(read_manifest(o.reuse_source)).get("bundle")
-        elif o.mode == "resume":
+        if o.mode == "resume":
             bundle = manifest_model(read_manifest(self.run)).get("bundle")
         else:
             bundle = rel(o.bundle_dir)
@@ -264,20 +262,6 @@ class Pipeline:
 
     def step_background(self) -> None:
         o = self.opts
-        if o.mode == "reuse_pred":
-            src = o.reuse_source
-            for sub in ("pred", "trig"):
-                if not (self.run / sub).exists():
-                    (self.run / sub).symlink_to(src / sub, target_is_directory=True)
-            src_man = read_manifest(src)
-            self.update_manifest("reused_from", {
-                "run": rel(src), "engine_version": PRED_TRIG_COMPATIBLE_SINCE, "how": "symlink",
-                "steps": ["3 pred/", "4 trig/"], "model_bundle": manifest_model(src_man).get("bundle"),
-                "source_git_commit": (src_man.get("runs") or [{}])[0].get("git_commit"),
-            })
-            detail(f"reusing pred/ and trig/ of {rel(src)} (symlinks): steps 3-4 unchanged since engine v{PRED_TRIG_COMPATIBLE_SINCE}")
-            self.record_predicted_zero(f"reused from {src.name}")
-            return
         if self.pred_frg.exists() or self.pred_bkg.exists():
             raise PipelineStop(f"Incomplete step 3 outputs in {rel(self.pred_frg.parent)}: move them to an archive and rerun.")
         self.report_devices()
@@ -406,15 +390,14 @@ def main(argv=None) -> int:
 
     try:
         window_days(start, end)
-        reuse = run_dir(start, end, PRED_TRIG_COMPATIBLE_SINCE) if PRED_TRIG_COMPATIBLE_SINCE != ENGINE_VERSION else None
-        opts = resolve_run_options(env, start, end, run_dir(start, end), DATA_DIR / FOLD_NN, reuse_source_dir=reuse)
+        opts = resolve_run_options(env, start, end, run_dir(start, end), DATA_DIR / FOLD_NN)
     except (RunOptionsError, ValueError) as e:
         log.error(f"[run options] {e}")
         return 2
 
     header([f"DEEPGRB PIPELINE  {start} -> {end}  ({len(window_days(start, end))} days, engine v{ENGINE_VERSION})",
             f"run folder : {rel(opts.run_dir)}",
-            f"model      : {opts.mode}  {rel(opts.bundle_dir)}" + (f"  (from {rel(opts.reuse_source)})" if opts.reuse_source else ""),
+            f"model      : {opts.mode}  {rel(opts.bundle_dir)}",
             f"label {opts.label}, train seed {opts.seed if opts.mode == 'train' else '-'}, jobs {jobs}"
             + (", DRY RUN" if args.dry_run else ""),
             f"log        : {rel(log_file) if log_file else '-'}"])

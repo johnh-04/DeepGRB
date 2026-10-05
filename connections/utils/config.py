@@ -36,10 +36,6 @@ GBM_BURST_DB = DATA_DIR / "gbm_burst_catalog.db"
 # Bump ENGINE_VERSION whenever a change alters predictions, triggers or events, so a new
 # run never reuses results produced by older code.
 ENGINE_VERSION = "3"
-# Steps 3-4 (background prediction, FOCuS) are unchanged since this engine version: a run of the
-# current version reuses pred/ and trig/ of the matching run of that version (symlinked, declared
-# in manifest.json). v3 changed only step 5 (B <= 0 invalid in the event significance).
-PRED_TRIG_COMPATIBLE_SINCE = "2"
 
 # ----------------------------------------------------------------------------- scientific parameters
 BIN_LENGTH_S = 4.096                      # CSPEC time bin
@@ -72,9 +68,6 @@ SENSITIVITY_MARGINS_S = {"primary (2 bins)": MATCH_MARGIN_S, "10 s": 10.0, "60 s
 SAA_GUARD_S = 150.0                       # "near SAA" in the catalog statistics (docs/WORKING_RULES.md §6)
 CRUPI_REFERENCE_PERIOD = ("2019-03-01", "2019-07-09")  # period covered by Crupi's tables
 
-# model trained on 2026-09-21 by upstream-equivalent code, valid only for this period
-LEGACY_PERIOD = ("2019-03-01", "2019-06-30")
-LEGACY_H5_NAME = "model_03-2019_07-2019_4.4_2026-09-21.h5"
 
 
 # ----------------------------------------------------------------------------- run folders

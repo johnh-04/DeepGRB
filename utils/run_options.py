@@ -8,11 +8,10 @@ variables below take priority over it.
     DEEPGRB_START_DATE / DEEPGRB_END_DATE   analysis period, 'YYYY-MM-DD', both days included
     DEEPGRB_RUN_LABEL      label of a separate run: data/runs/<start>_<end>/engine-v<N>-<label>/
                            and bundle data/nn_model/bundles/model_<start>_<end>_<label>/.
-    DEEPGRB_FORCE_TRAIN=1  train a new network even for the legacy 2019 period; the legacy
-                           model is never loaded. Requires DEEPGRB_RUN_LABEL and DEEPGRB_TRAIN_SEED.
+    DEEPGRB_FORCE_TRAIN=1  train a new network. Requires DEEPGRB_RUN_LABEL and DEEPGRB_TRAIN_SEED.
     DEEPGRB_TRAIN_SEED     integer seed for python/numpy/TensorFlow (default 0 when not forcing).
     DEEPGRB_REUSE_BUNDLE=1 if the labelled bundle already exists, load it instead of failing.
-    DEEPGRB_ALLOW_TRAINING=1  allow training when no bundle exists (non-legacy periods).
+    DEEPGRB_ALLOW_TRAINING=1  allow training when no bundle exists for the period.
     DEEPGRB_SKIP_DOWNLOAD=1   skip steps 1-2 (every daily table must exist).
     DEEPGRB_SKIP_LOCALIZATION=1  skip step 6 (localization + classification).
     DEEPGRB_JOBS           parallel jobs of step 6.
@@ -20,10 +19,6 @@ variables below take priority over it.
 Safety rules: a new labelled run never reuses an existing folder; an existing run (labelled or
 not) only resumes its missing steps and its outputs are never overwritten; training needs
 DEEPGRB_FORCE_TRAIN with an explicit seed and a label (or DEEPGRB_ALLOW_TRAINING for new periods).
-
-Reuse across engine versions: when the matching run of an older, compatible engine version
-(same period and label) has complete pred/ and trig/, a new run links them instead of
-predicting again (mode "reuse_pred"; never with DEEPGRB_FORCE_TRAIN).
 """
 
 import hashlib
@@ -32,8 +27,6 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Mapping, Optional
-
-from connections.utils.config import LEGACY_H5_NAME, LEGACY_PERIOD  # noqa: F401 (re-exported)
 
 DEFAULT_TRAIN_SEED = 0
 _LABEL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -83,12 +76,10 @@ class RunOptions:
     label: Optional[str]
     run_dir: Path
     bundle_dir: Path
-    legacy_h5: Path
-    mode: str  # "load_bundle" | "wrap_legacy" | "train" | "unavailable" | "reuse_pred" | "resume"
+    mode: str  # "load_bundle" | "train" | "unavailable" | "resume"
     seed: int
     force_train: bool
     reuse_bundle: bool
-    reuse_source: Optional[Path] = None
 
     @property
     def is_labelled(self) -> bool:
@@ -104,12 +95,8 @@ def has_pred_trig(run: Path) -> bool:
 
 
 def resolve_run_options(env: Mapping[str, str], start_date: str, end_date: str,
-                        default_run_dir: Path, nn_dir: Path, reuse_source_dir: Optional[Path] = None) -> RunOptions:
-    """
-    Decides run folder, bundle and model mode; raises RunOptionsError before anything is written.
-    reuse_source_dir: default run folder of the older compatible engine version (its labelled
-    sibling is used for labelled runs).
-    """
+                        default_run_dir: Path, nn_dir: Path) -> RunOptions:
+    """Decides run folder, bundle and model mode; raises RunOptionsError before anything is written."""
     label = env.get("DEEPGRB_RUN_LABEL") or None
     force = _flag(env, "DEEPGRB_FORCE_TRAIN")
     reuse = _flag(env, "DEEPGRB_REUSE_BUNDLE")
@@ -127,9 +114,7 @@ def resolve_run_options(env: Mapping[str, str], start_date: str, end_date: str,
     except ValueError:
         raise RunOptionsError(f"DEEPGRB_TRAIN_SEED={seed_env!r} is not an integer.") from None
 
-    legacy_h5 = nn_dir / LEGACY_H5_NAME
     bundles = nn_dir / "bundles"
-    is_legacy_period = (start_date, end_date) == LEGACY_PERIOD
     run = default_run_dir if label is None else default_run_dir.parent / f"{default_run_dir.name}-{label}"
 
     # an existing run with its predictions only resumes the missing steps (no model needed)
@@ -138,19 +123,10 @@ def resolve_run_options(env: Mapping[str, str], start_date: str, end_date: str,
             raise RunOptionsError(f"Run folder {run} already has predictions: DEEPGRB_FORCE_TRAIN would retrain into it. "
                                   "Choose another label.")
         bundle = manifest_model(read_manifest(run)).get("bundle") or "unknown"
-        return RunOptions(start_date, end_date, label, run, Path(bundle), legacy_h5, "resume", seed, force, reuse)
+        return RunOptions(start_date, end_date, label, run, Path(bundle), "resume", seed, force, reuse)
     if label is not None and run.exists():
         raise RunOptionsError(f"Run folder {run} exists but is incomplete (no pred/ and trig/): "
                               "move it to an archive or choose another label.")
-
-    source = None
-    if reuse_source_dir is not None and not force:
-        cand = reuse_source_dir if label is None else reuse_source_dir.parent / f"{reuse_source_dir.name}-{label}"
-        source = cand if has_pred_trig(cand) else None
-    if source is not None:
-        bundle = manifest_model(read_manifest(source)).get("bundle") or "unknown"
-        return RunOptions(start_date, end_date, label, run, Path(bundle), legacy_h5, "reuse_pred", seed,
-                          force, reuse, source)
 
     if label is not None:
         bundle = bundles / f"model_{start_date}_{end_date}_{label}"
@@ -164,30 +140,26 @@ def resolve_run_options(env: Mapping[str, str], start_date: str, end_date: str,
         else:
             raise RunOptionsError(f"No bundle {bundle.name}: set DEEPGRB_FORCE_TRAIN=1 (with DEEPGRB_TRAIN_SEED) to train it.")
     else:
-        bundle = bundles / (legacy_h5.stem if is_legacy_period else f"model_{start_date}_{end_date}_seed{seed}")
+        bundle = bundles / f"model_{start_date}_{end_date}_seed{seed}"
         if bundle.exists():
             mode = "load_bundle"
-        elif is_legacy_period and legacy_h5.exists():
-            mode = "wrap_legacy"
         elif allow:
             mode = "train"
         else:
             # only an error when step 3 actually needs the model
             mode = "unavailable"
 
-    return RunOptions(start_date, end_date, label, run, bundle, legacy_h5, mode, seed, force, reuse)
+    return RunOptions(start_date, end_date, label, run, bundle, mode, seed, force, reuse)
 
 
 def obtain_model(nn, opts: RunOptions, train_params: Mapping, extra_metadata: Optional[Mapping] = None) -> None:
-    """Loads, wraps or trains the network of `nn` (a prepared ModelNN) according to opts.mode."""
+    """Loads or trains the network of `nn` (a prepared ModelNN) according to opts.mode."""
     if opts.mode == "load_bundle":
         nn.load_bundle(opts.bundle_dir)
-    elif opts.mode == "wrap_legacy":
-        nn.bundle_from_legacy_h5(opts.legacy_h5, opts.bundle_dir)
     elif opts.mode == "train":
         nn.train(opts.bundle_dir, seed=opts.seed, extra_metadata=dict(extra_metadata or {}), **train_params)
-    elif opts.mode in ("reuse_pred", "resume"):
-        raise RunOptionsError(f"Run {opts.run_dir.name} already has (or reuses) its predictions: no model is needed.")
+    elif opts.mode == "resume":
+        raise RunOptionsError(f"Run {opts.run_dir.name} already has its predictions: no model is needed.")
     elif opts.mode == "unavailable":
         raise RunOptionsError(f"No model bundle {opts.bundle_dir.name}: set DEEPGRB_ALLOW_TRAINING=1 to train one.")
     else:
@@ -227,7 +199,7 @@ def bundle_checksum(bundle_dir: Path) -> Optional[str]:
 
 
 def bundle_seed(bundle_dir: Path) -> Optional[int]:
-    """Training seed recorded in the bundle metadata (None for the legacy model, whose seed is unknown)."""
+    """Training seed recorded in the bundle metadata (None if not recorded)."""
     meta = Path(bundle_dir) / "metadata.json"
     return json.loads(meta.read_text()).get("seed") if meta.exists() else None
 
