@@ -3,8 +3,6 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .ipynb_checkpoints
-.pytest_cache/
-.mypy_cache/
 .idea/
 .vscode/
 .DS_Store
@@ -15,43 +13,34 @@ __pycache__/
 logs/
 
 # ----------------------------------------------------------------------------- data (see data/README.md)
-# raw and preprocessed inputs, shared by all periods (~26 GB)
-data/cspec/
-data/poshist/
-data/bkg/
-data/*.pha
-data/*.fit
-data/*.fits
-data/plots/
-data/grb_classification/
-# outputs of the old layout (kept on disk, not versioned)
-data/pred/
-data/trig/
-data/results/
-data/fermi_triggers_sandbox_jan2019.csv
-# Burst Catalog database (10 MB): rebuilt from HEASARC with connections/fermi_data_tools.py
-data/gbm_burst_catalog.db
+# Only the files of the official 2019 run and the catalog it needs are versioned;
+# everything else in data/ (raw data, daily tables, models, other runs) stays on disk.
+data/*
+!data/README.md
+!data/gbm_trig_catalog.csv
 
-# models: weights and scalers are not versioned, only the bundle metadata
+!data/nn_model/
 data/nn_model/*
 !data/nn_model/bundles/
-data/nn_model/bundles/*/*
-!data/nn_model/bundles/*/metadata.json
+data/nn_model/bundles/*
+!data/nn_model/bundles/model_2019-03-01_2019-06-30_seed1/
+data/nn_model/bundles/model_2019-03-01_2019-06-30_seed1/*
+!data/nn_model/bundles/model_2019-03-01_2019-06-30_seed1/metadata.json
 
-# runs: the large matrices of steps 3-4 are not versioned (manifest, RESULTS.md, results/,
-# validation/ and analysis/ are)
+!data/runs/
+data/runs/*
+!data/runs/2019-03-01_2019-06-30/
+data/runs/2019-03-01_2019-06-30/*
+!data/runs/2019-03-01_2019-06-30/engine-v3-seed1/
+# matrices of steps 3-4 (large; symbolic links in the official run)
 data/runs/*/*/pred
 data/runs/*/*/trig
+# outputs of earlier code versions kept on disk only
+data/runs/*/*/validation/section1_cases.csv
 
-# archives: only README and checksums are versioned
-data/_archive_*/*
-!data/_archive_*/README.md
-!data/_archive_*/SHA256SUMS*
-
-# ----------------------------------------------------------------------------- old layout, kept on disk only
+# ----------------------------------------------------------------------------- earlier layout, kept on disk only
 data_test/
 connections/utils/m_check/
 benchmark/
 models/tests/
-# outputs of earlier code versions kept on disk only
-data/runs/*/*/validation/section1_cases.csv
+scripts/
