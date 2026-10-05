@@ -21,7 +21,10 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 
-from connections.utils.config import BASE_DIR, CRUPI_REFERENCE_PERIOD, DOCS_DIR, RUNS_DIR, run_period
+from benchmark.report_tables import (TYPE_TO_CLASS, JoinError, check_gbm_join, confusion_metrics, crupi_named_list, gbm_named_list,
+                                     gbm_type_vs_class)
+from connections.utils.config import (BASE_DIR, BIN_LENGTH_S, CRUPI_REFERENCE_PERIOD, DOCS_DIR, FOCUS_T_MAX_BINS, MATCH_MARGIN_S,
+                                      RUNS_DIR, run_period)
 from utils.logs import detail, setup_logging
 from utils.run_options import bundle_seed, manifest_model, read_manifest
 
@@ -280,12 +283,18 @@ def section_lonely(f: dict) -> List[str]:
     return lines
 
 
+def pct_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Percentages as text with one decimal ('—' where undefined)."""
+    return df.apply(lambda col: col.map(lambda v: "—" if pd.isna(v) else f"{v:.1f}%"))
+
+
 def section_classification(f: dict) -> List[str]:
     s, v = f["summary"], f["run"] / "validation"
     lines = ["## 6. Classificazione (baseline euristica di Crupi)", ""]
     if f["classified"] is None:
         return lines + ["_Step 6 non eseguito: `results/events_classified.csv` assente._", ""]
-    pc = f["classified"]["predicted_class"].value_counts()
+    cls = f["classified"]
+    pc = cls["predicted_class"].value_counts()
     lines += [
         "Regole della \"manual classification logic\" di Crupi (`pipeline/script_classification2.py` upstream): soglie lette da "
         "decision tree uno-contro-resto e rifinite a mano. Baseline volutamente semplice, da superare con XGBoost (fase 6). "
@@ -295,26 +304,128 @@ def section_classification(f: dict) -> List[str]:
         "Classi predette su tutti gli eventi: " + ", ".join(f"{k} {int(n)}" for k, n in pc.items()) + ".",
         "",
     ]
-    if not s or not s["classification"]:
-        return lines + ["_Confronto con un riferimento non disponibile (servono le tabelle di Crupi)._", ""]
+    lines += classification_vs_crupi_lines(f)
+    lines += gbm_type_lines(f)
+    return lines
+
+
+def classification_vs_crupi_lines(f: dict) -> List[str]:
+    s, v = f["summary"], f["run"] / "validation"
+    lines = ["### 6.1 Classe predetta contro le classi tentative di Crupi", ""]
+    table = read_csv(v / "classification_vs_crupi.csv")
+    if not s or not s["classification"] or table is None or table.empty:
+        return lines + ["_Confronto non disponibile (servono le tabelle di Crupi e lo step 6)._", ""]
     c = s["classification"]
+    cm = confusion_metrics(table)
+    cm["per_class"].to_csv(v / "classification_metrics.csv", index=False)
     rules = read_csv(v / "classification_rules.csv")
-    cm = read_csv(v / "classification_confusion.csv", index_col=0)
-    lines += [
-        f"Su {c['matched']} eventi abbinati a Crupi, classe predetta tra quelle tentative di Crupi: {ratio(c['correct'], c['matched'])}.",
+    per_class = cm["per_class"].copy()
+    for col in ("recall %", "precision %"):
+        per_class[col] = per_class[col].map(lambda x: "—" if pd.isna(x) else f"{x:.1f}%")
+    return lines + [
+        "Le classi di Crupi sono **tentative** (assegnate a mano nel paper, a volte multiple come `GRB/GF`): misurano la coerenza "
+        "con il suo giudizio, non la natura fisica degli eventi.",
         "",
-        "Per regola, uno-contro-resto:",
+        f"Su {c['matched']} eventi abbinati a Crupi, classe predetta tra quelle tentative (anche multiple): {ratio(c['correct'], c['matched'])}.",
+        "",
+        f"Matrice di confusione sugli eventi con classe Crupi univoca: **{cm['n']}** eventi; accuracy complessiva "
+        f"**{cm['correct']}/{cm['n']} ({cm['accuracy']:.1f}%)**. Righe: classe di Crupi; colonne: classe predetta.",
+        "",
+        "Conteggi:",
+        "",
+        md_table(cm["counts"], index=True),
+        "",
+        "Percentuali per riga (quota di ogni classe di Crupi finita in ciascuna classe predetta; la diagonale è la recall):",
+        "",
+        md_table(pct_table(cm["row_pct"]), index=True),
+        "",
+        "Percentuali per colonna (composizione di ogni classe predetta; la diagonale è la precision):",
+        "",
+        md_table(pct_table(cm["col_pct"]), index=True),
+        "",
+        "Per classe (supporto = eventi con quella classe di Crupi):",
+        "",
+        md_table(per_class),
+        "",
+        "Per regola, uno-contro-resto (come nello script di Crupi):",
         "",
         md_table(rules) if rules is not None else "_(nessuna riga)_",
         "",
-        f"Matrice di confusione sugli eventi con classe Crupi univoca ({c['single_label']}; righe Crupi, colonne predetta):",
+    ]
+
+
+def gbm_type_lines(f: dict) -> List[str]:
+    v = f["run"] / "validation"
+    lines = ["### 6.2 Tipo di trigger GBM contro classe predetta", ""]
+    matches = read_csv(v / "matches_gbm_catalog.csv")
+    if matches is None:
+        return lines + ["_Validazione (step 8) non eseguita._", ""]
+    if f["classified"]["trig_ids"].tolist() != f["events"]["trig_ids"].tolist():
+        raise JoinError("results/events_classified.csv and results/events_table.csv list different events")
+    check_gbm_join(matches, f["events"], MATCH_MARGIN_S, (FOCUS_T_MAX_BINS + 1) * BIN_LENGTH_S)
+    counts, row_pct, conc, total = gbm_type_vs_class(matches, f["classified"])
+    counts.to_csv(v / "gbm_type_vs_class.csv")
+    conc.to_csv(v / "gbm_type_concordance.csv", index=False)
+    conc_txt = conc.copy()
+    conc_txt["concordanza %"] = conc_txt["concordanza %"].map(lambda x: f"{x:.1f}%")
+    mapping = ", ".join(f"{k}→{c}" for k, c in TYPE_TO_CLASS.items())
+    return lines + [
+        f"Trigger del catalogo GBM abbinati a un nostro evento: {total['n']} (verificato che ogni trigger cada nella finestra "
+        f"dell'evento a cui punta, tolleranza {MATCH_MARGIN_S:.3f} s). Il **tipo GBM non è la natura fisica** dell'evento: "
+        "è la classificazione del flight software e dei duty scientist (UNCERT e LOCLPAR sono incerti per definizione).",
         "",
-        "```",
-        cm.to_string() if cm is not None else "",
-        "```",
+        "Conteggi (righe: tipo GBM; colonne: classe predetta):",
+        "",
+        md_table(counts, index=True),
+        "",
+        "Percentuali per riga:",
+        "",
+        md_table(pct_table(row_pct), index=True),
+        "",
+        f"Concordanza con una mappatura **IPOTETICA** ({mapping}): **{total['agree']}/{total['n']} ({total['pct']:.1f}%)**.",
+        "",
+        md_table(conc_txt),
         "",
     ]
-    return lines
+
+
+def section_lists(f: dict) -> List[str]:
+    v = f["run"] / "validation"
+    lines = ["## 9. Elenchi per nome", ""]
+    matches = read_csv(v / "matches_gbm_catalog.csv")
+    if matches is None or f["events"] is None:
+        return lines + ["_Validazione (step 8) non eseguita._", ""]
+    gbm = gbm_named_list(matches, f["events"], f["classified"])
+    grb, other = gbm[gbm["tipo"] == "GRB"], gbm[gbm["tipo"] != "GRB"]
+    grb.to_csv(v / "list_gbm_grb.csv", index=False)
+    other.to_csv(v / "list_gbm_other.csv", index=False)
+    show = ["trigger_name", "trigger_time", "T90_s", "esito", "evento_trig_ids", "classe_predetta"]
+    tally = lambda d: ", ".join(f"{k} {int(n)}" for k, n in d["esito"].value_counts().items())  # noqa: E731
+    lines += [
+        "Tutti i trigger del catalogo GBM nei giorni con dati del periodo (`validation/list_gbm_grb.csv`, `validation/list_gbm_other.csv`). "
+        "Esito: *rivelato* (abbinato a un nostro evento), *mancato* (dati presenti, nessun evento), *senza dati* (maschera SAA o buco).",
+        "",
+        f"### 9.1 GRB ({len(grb)}: {tally(grb)})",
+        "",
+        md_table(grb[show], ".1f"),
+        "",
+        f"### 9.2 Trigger non-GRB ({len(other)}: {tally(other)})",
+        "",
+        md_table(other[["tipo"] + show], ".1f"),
+        "",
+    ]
+    known, unknown = read_csv(v / "matches_crupi_known.csv"), read_csv(v / "matches_crupi_unknown.csv")
+    if known is None or unknown is None:
+        return lines + ["### 9.3 Eventi di Crupi", "", "_Non applicabile: le tabelle di Crupi non coprono questo periodo._", ""]
+    crupi = crupi_named_list(known, unknown, f["events"], f["classified"])
+    crupi.to_csv(v / "list_crupi_events.csv", index=False)
+    return lines + [
+        f"### 9.3 Eventi di Crupi in finestra ({len(crupi)}: {tally(crupi)}; `validation/list_crupi_events.csv`)",
+        "",
+        md_table(crupi[["insieme", "id", "nome_catalogo", "trigger_time_utc", "CE_Crupi", "esito", "evento_trig_ids",
+                        "classe_predetta", "diagnosi"]]),
+        "",
+    ]
 
 
 def section_localization(f: dict) -> List[str]:
@@ -378,7 +489,7 @@ def results_markdown(run: Path) -> str:
         "",
     ]
     for section in (section_run, section_events, section_gbm, section_crupi, section_lonely, section_classification,
-                    section_localization, section_engine):
+                    section_localization, section_engine, section_lists):
         lines += section(f)
     return "\n".join(lines)
 
