@@ -53,3 +53,5 @@ data_test/
 connections/utils/m_check/
 benchmark/
 models/tests/
+# outputs of earlier code versions kept on disk only
+data/runs/*/*/validation/section1_cases.csv

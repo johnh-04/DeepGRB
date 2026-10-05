@@ -1,16 +1,13 @@
 """
-Readable reports of the runs (pipeline step 9), written only from files on disk:
-
-- <run>/RESULTS.md: the scientific report of one run, same sections for every run
-  (sections without inputs say so instead of disappearing);
-- docs/RUNS.md: one row per run found in data/runs/.
+Readable report of a run (pipeline step 9), written only from files on disk:
+<run>/RESULTS.md, with the same sections for every run (a section without inputs says so).
 
 Inputs: <run>/manifest.json, the bundle metadata, <run>/results/*.csv and <run>/validation/
-(validation/validate.py). No number is written by hand.
+(validation/validate.py). No number is written by hand. The derived tables of sections 6 and 9
+are also written as CSV in <run>/validation/.
 
 Usage (repo root):
     python -m validation.report --run data/runs/<start>_<end>/engine-v<N>[-<label>]
-    python -m validation.report --index          # only docs/RUNS.md
 """
 
 import argparse
@@ -21,25 +18,25 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 
-from validation.report_tables import (TYPE_TO_CLASS, JoinError, check_gbm_join, confusion_metrics, crupi_named_list, gbm_named_list,
-                                     gbm_type_vs_class)
-from connections.utils.config import (BASE_DIR, BIN_LENGTH_S, CRUPI_REFERENCE_PERIOD, DOCS_DIR, FOCUS_T_MAX_BINS, MATCH_MARGIN_S,
-                                      RUNS_DIR, run_period)
+from connections.utils.config import (BASE_DIR, BIN_LENGTH_S, CRUPI_REFERENCE_PERIOD, FOCUS_T_MAX_BINS, MATCH_MARGIN_S,
+                                      run_period)
 from utils.logs import detail, setup_logging
 from utils.run_options import bundle_seed, manifest_model, read_manifest
+from validation.report_tables import (TYPE_TO_CLASS, JoinError, check_gbm_join, confusion_metrics, crupi_named_list,
+                                      gbm_named_list, gbm_type_vs_class)
 
 OK, KO = "✔", "✘"
 RESULTS_FILE = "RESULTS.md"
-RUNS_INDEX = DOCS_DIR / "RUNS.md"
+NOT_RUN = "_Validation (step 8) not run._"
 
 
 # ----------------------------------------------------------------------------- markdown helpers
 def md_table(df: pd.DataFrame, floatfmt: str = ".2f", index: bool = False) -> str:
-    """Markdown table without external dependencies (tabulate is not required)."""
+    """Markdown table without external dependencies."""
     if index:
         df = df.reset_index()
     if df.empty:
-        return "_(nessuna riga)_"
+        return "_(no rows)_"
     cols = list(df.columns)
     lines = ["| " + " | ".join(str(c) for c in cols) + " |", "|" + "---|" * len(cols)]
     for _, r in df.iterrows():
@@ -69,9 +66,14 @@ def rel(path: Path) -> str:
         return str(path)
 
 
+def pct_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Percentages as text with one decimal ('—' where undefined)."""
+    return df.apply(lambda col: col.map(lambda v: "—" if pd.isna(v) else f"{v:.1f}%"))
+
+
 # ----------------------------------------------------------------------------- run facts
 def run_facts(run: Path) -> dict:
-    """Facts shared by RESULTS.md and RUNS.md, from manifest, bundle metadata and outputs."""
+    """Facts used by the report, from manifest, bundle metadata and outputs."""
     run = Path(run)
     man = read_manifest(run)
     model = manifest_model(man)
@@ -81,60 +83,49 @@ def run_facts(run: Path) -> dict:
     meta = json.loads(meta_path.read_text()) if meta_path and meta_path.exists() else {}
     seed = model.get("seed", bundle_seed(bundle_path) if bundle_path else None)
     start, end = run_period(run)
-    ev = read_csv(run / "results" / "events_table.csv")
     summary_path = run / "validation" / "summary.json"
     return {
         "run": run, "name": run.name, "start": start, "end": end, "manifest": man, "model": model,
         "bundle": bundle, "meta": meta, "seed": seed,
-        "events": ev, "summary": json.loads(summary_path.read_text()) if summary_path.exists() else None,
-        "flags": read_csv(run / "results" / "events_flags.csv"),
+        "events": read_csv(run / "results" / "events_table.csv"),
+        "summary": json.loads(summary_path.read_text()) if summary_path.exists() else None,
         "classified": read_csv(run / "results" / "events_classified.csv"),
         "localized": (run / "results" / "events_table_loc.csv").exists(),
     }
 
 
-def seed_text(f: dict) -> str:
-    if f["seed"] is not None:
-        return str(f["seed"])
-    if f["meta"].get("source") == "legacy_h5":
-        return "non registrato (modello legacy)"
-    return "non registrato"
-
-
-# ----------------------------------------------------------------------------- RESULTS.md
+# ----------------------------------------------------------------------------- sections
 def section_run(f: dict) -> List[str]:
     man, model, meta = f["manifest"], f["model"], f["meta"]
     p = man.get("parameters", {})
     history = man.get("runs", [])
     reused = man.get("reused_from")
     lines = [
-        "## 1. Run, rete e parametri",
+        "## 1. Run, network and parameters",
         "",
-        f"- Periodo: **{f['start']} → {f['end']}** (giorni UTC inclusi); run `{rel(f['run'])}`.",
-        f"- Motore: engine v{p.get('engine_version', '?')}; esecuzioni: "
+        f"- Period: **{f['start']} → {f['end']}** (UTC days, both included); run `{rel(f['run'])}`.",
+        f"- Engine: v{p.get('engine_version', '?')}; executions: "
         + "; ".join(f"{h.get('started', '?')[:16].replace('T', ' ')} commit `{h.get('git_commit', '?')[:10]}`"
-                    + (f" (step da eseguire all'avvio: {', '.join(map(str, h['steps']))})" if h.get("steps") else "")
-                    + (" (codice modificato)" if h.get("code_dirty") else "") for h in history)
+                    + (f" (steps to run at start: {', '.join(map(str, h['steps']))})" if h.get("steps") else "")
+                    + (" (modified code)" if h.get("code_dirty") else "") for h in history)
         + ".",
-        f"- Rete: bundle `{f['bundle'] or '?'}`; seed di training {seed_text(f)}; "
-        f"checksum sha256 del bundle `{model.get('checksum', 'non registrato')}`.",
+        f"- Network: bundle `{f['bundle'] or '?'}`; training seed {f['seed'] if f['seed'] is not None else 'not recorded'}; "
+        f"bundle sha256 `{model.get('checksum', 'not recorded')}`.",
     ]
     if reused:
-        lines.append(f"- Predizioni (step 3) e trigger (step 4) riusati da `{reused['run']}` "
-                     f"(engine v{reused['engine_version']}, {reused['how']}).")
+        lines.append(f"- Predictions (step 3) and FOCuS outputs (step 4) computed with the same bundle by engine "
+                     f"v{reused['engine_version']}, whose steps 3-4 are unchanged; linked from `{reused['run']}` ({reused['how']}).")
     if meta.get("source") == "trained":
         h = meta.get("hyperparameters", {})
-        lines.append(f"- Addestramento: {meta.get('epochs_run', '?')} epoche (migliore {meta.get('best_epoch', '?')}), "
-                     f"{h.get('units', '?')} unità, lr {h.get('lr', '?')}, batch {h.get('batch_size', '?')}, "
-                     f"{meta.get('training_seconds', '?')} s su {', '.join(meta.get('devices', [])) or '?'}.")
-    elif meta.get("source") == "legacy_h5":
-        lines.append(f"- Addestramento: {meta.get('note', 'modello legacy')}.")
+        lines.append(f"- Training: {meta.get('epochs_run', '?')} epochs (best {meta.get('best_epoch', '?')}), "
+                     f"{h.get('units', '?')} units, lr {h.get('lr', '?')}, batch {h.get('batch_size', '?')}, "
+                     f"{meta.get('training_seconds', '?')} s on {', '.join(meta.get('devices', [])) or '?'}.")
     focus, trig = p.get("focus", {}), p.get("trigger", {})
     lines += [
-        f"- Parametri: bin {p.get('bin_length_s')} s; FOCuS mu_min {focus.get('mu_min')}, t_max {focus.get('t_max_bins')} bin "
-        f"(ingresso: {focus.get('input')}); soglia {trig.get('threshold_sigma')} σ in {trig.get('range')} su ≥ "
-        f"{trig.get('min_detectors')} rivelatori; merge {p.get('merge_s')} s; maschera SAA ±{p.get('saa_exclusion_bins_each_side')} "
-        f"bin attorno ai buchi > {p.get('saa_gap_s')} s.",
+        f"- Parameters: bin {p.get('bin_length_s')} s; FOCuS mu_min {focus.get('mu_min')}, t_max {focus.get('t_max_bins')} bins "
+        f"(input: {focus.get('input')}); threshold {trig.get('threshold_sigma')} σ in {trig.get('range')} on ≥ "
+        f"{trig.get('min_detectors')} detector(s); merge {p.get('merge_s')} s; SAA mask ±{p.get('saa_exclusion_bins_each_side')} "
+        f"bins around data gaps > {p.get('saa_gap_s')} s.",
         "",
     ]
     return lines
@@ -142,52 +133,53 @@ def section_run(f: dict) -> List[str]:
 
 def section_events(f: dict) -> List[str]:
     ev, s = f["events"], f["summary"]
-    lines = ["## 2. Eventi", ""]
+    lines = ["## 2. Events", ""]
     if ev is None:
-        return lines + ["_Step 5 non eseguito: `results/events_table.csv` assente._", ""]
+        return lines + ["_Step 5 not run: `results/events_table.csv` missing._", ""]
     ce = {c: int((ev["CE"] == c).sum()) for c in "RSP"}
-    lines.append(f"- Totale: **{len(ev)}**; tier CE: R {ce['R']}, S {ce['S']}, P {ce['P']} "
-                 "(R: più rivelatori e più bande; S: più rivelatori, una banda; P: gli altri).")
+    lines.append(f"- Total: **{len(ev)}**; CE tiers: R {ce['R']}, S {ce['S']}, P {ce['P']} "
+                 "(R: several detectors and several energy ranges; S: several detectors, one range; P: the others).")
     if s:
         e = s["events"]
-        lines.append(f"- Abbinati al catalogo trigger GBM: {e['match_gbm']}"
-                     + (f"; a Crupi noti: {e['match_crupi_known']}; a Crupi inediti: {e['match_crupi_unknown']}" if s["crupi"] else "")
-                     + f". Senza controparte: **{e['without_counterpart']}** "
-                     f"({e['without_counterpart'] / max(s['data_days'], 1):.2f} al giorno su {s['data_days']} giorni con dati).")
+        lines.append(f"- Matched to the GBM trigger catalog: {e['match_gbm']}"
+                     + (f"; to Crupi's known events: {e['match_crupi_known']}; to Crupi's unknown events: {e['match_crupi_unknown']}"
+                        if s["crupi"] else "")
+                     + f". Without counterpart: **{e['without_counterpart']}** "
+                     f"({e['without_counterpart'] / max(s['data_days'], 1):.2f} per day over {s['data_days']} days with data).")
     return lines + [""]
 
 
 def section_gbm(f: dict) -> List[str]:
     s, v = f["summary"], f["run"] / "validation"
-    lines = ["## 3. Catalogo ufficiale Fermi-GBM", ""]
+    lines = ["## 3. Official Fermi-GBM catalog", ""]
     if not s:
-        return lines + ["_Validazione (step 8) non eseguita._", ""]
+        return lines + [NOT_RUN, ""]
     g = s["gbm"]
     lines += [
-        f"Regola primaria: abbinamento uno-a-uno, istante del trigger entro [inizio evento − {s['match_margin_s']:.3f} s, "
-        f"fine evento + {s['match_margin_s']:.3f} s].",
+        f"Primary rule: one-to-one matching, trigger time within [event start − {s['match_margin_s']:.3f} s, "
+        f"event end + {s['match_margin_s']:.3f} s].",
         "",
-        f"- Trigger nel periodo, nei giorni con dati: {g['catalog_triggers']}; senza dati validi all'istante (maschera SAA/buchi): "
-        f"{g['missing_no_data']}; disponibili: {g['available']}; rivelati: **{g['detected']}**.",
-        f"- Entro ±150 s da un buco > 500 s: {g['near_saa_150s']} trigger.",
+        f"- Triggers in the period, on days with data: {g['catalog_triggers']}; without valid data at the trigger time "
+        f"(SAA mask or gap): {g['missing_no_data']}; available: {g['available']}; detected: **{g['detected']}**.",
+        f"- Within ±150 s of a data gap > 500 s: {g['near_saa_150s']} triggers.",
         "",
         md_table(pd.read_csv(v / "gbm_by_type.csv")),
         "",
-        "GRB del Burst Catalog (T90):",
+        "GRBs of the Burst Catalog (T90):",
         "",
     ]
-    rows = [{"": "GRB nel periodo", "questa run": g["grb_total"]},
-            {"": "senza dati (SAA)", "questa run": g["grb_missing"]},
-            {"": "rivelati / disponibili", "questa run": ratio(g["grb_detected"], g["grb_available"])},
-            {"": "T90 > 4.096 s", "questa run": ratio(g["long_detected"], g["long_available"])},
-            {"": "T90 ≤ 4.096 s", "questa run": ratio(g["short_detected"], g["short_available"])}]
+    rows = [{"": "GRBs in the period", "this run": g["grb_total"]},
+            {"": "without data (SAA)", "this run": g["grb_missing"]},
+            {"": "detected / available", "this run": ratio(g["grb_detected"], g["grb_available"])},
+            {"": "T90 > 4.096 s", "this run": ratio(g["long_detected"], g["long_available"])},
+            {"": "T90 ≤ 4.096 s", "this run": ratio(g["short_detected"], g["short_available"])}]
     table = pd.DataFrame(rows)
     if s["crupi"]:
         P = s["crupi"]["paper"]
-        table["paper (fino al 9/07/2019)"] = [P["grb_burst_catalog"], P["grb_missing"], f"{P['grb_detected']}/{P['grb_available']}",
-                                             f"{P['long_detected']}/{P['long_available']} (88%)",
-                                             f"{P['short_detected']}/{P['short_available']} (34%)"]
-    lines += [md_table(table), "", "Sensibilità alla regola di abbinamento:", "", md_table(pd.read_csv(v / "sensitivity.csv")), ""]
+        table["paper (to 2019-07-09)"] = [P["grb_burst_catalog"], P["grb_missing"], f"{P['grb_detected']}/{P['grb_available']}",
+                                          f"{P['long_detected']}/{P['long_available']} (88%)",
+                                          f"{P['short_detected']}/{P['short_available']} (34%)"]
+    lines += [md_table(table), "", "Sensitivity to the matching window:", "", md_table(pd.read_csv(v / "sensitivity.csv")), ""]
     return lines
 
 
@@ -196,125 +188,113 @@ def acceptance_rows(s: dict) -> pd.DataFrame:
     kn, un = c["known"], c["unknown"]
     rs_k, rs_u = c["known_RS"], c["unknown_RS"]
     rows = [
-        ("Noti di Crupi ritrovati ≥ 90%", ratio(kn["matched"], kn["in_window"]), kn["in_window"] and kn["matched"] / kn["in_window"] >= 0.9),
-        ("Tutti gli R e S noti ritrovati", ratio(*rs_k), rs_k[0] == rs_k[1]),
-        ("Inediti R+S ritrovati ≥ 90%", ratio(*rs_u), bool(rs_u[1]) and rs_u[0] / rs_u[1] >= 0.9),
-        ("Inediti complessivi ≥ 70%", ratio(un["matched"], un["in_window"]), un["in_window"] and un["matched"] / un["in_window"] >= 0.7),
+        ("Crupi's known events found ≥ 90%", ratio(kn["matched"], kn["in_window"]),
+         kn["in_window"] and kn["matched"] / kn["in_window"] >= 0.9),
+        ("All known R and S events found", ratio(*rs_k), rs_k[0] == rs_k[1]),
+        ("Unknown R+S events found ≥ 90%", ratio(*rs_u), bool(rs_u[1]) and rs_u[0] / rs_u[1] >= 0.9),
+        ("All unknown events found ≥ 70%", ratio(un["matched"], un["in_window"]),
+         un["in_window"] and un["matched"] / un["in_window"] >= 0.7),
     ]
-    out = [{"criterio (docs/WORKING_RULES.md §6)": a, "misurato": b, "esito": OK if ok else KO} for a, b, ok in rows]
+    out = [{"criterion (docs/VALIDATION.md)": a, "measured": b, "result": OK if ok else KO} for a, b, ok in rows]
     out += [
-        {"criterio (docs/WORKING_RULES.md §6)": "Recall GRB T90 > 4.096 s ~ 88% (paper)", "misurato": ratio(g["long_detected"], g["long_available"]),
-         "esito": "ordine di grandezza"},
-        {"criterio (docs/WORKING_RULES.md §6)": "Recall GRB T90 ≤ 4.096 s ~ 34% (paper)", "misurato": ratio(g["short_detected"], g["short_available"]),
-         "esito": "ordine di grandezza"},
-        {"criterio (docs/WORKING_RULES.md §6)": "Numero eventi ~ 100 (paper, fino al 9 luglio)", "misurato": str(s["events"]["total"]),
-         "esito": "informativo: dipende dalla rete"},
+        {"criterion (docs/VALIDATION.md)": "GRB recall T90 > 4.096 s ~ 88% (paper)",
+         "measured": ratio(g["long_detected"], g["long_available"]), "result": "order of magnitude"},
+        {"criterion (docs/VALIDATION.md)": "GRB recall T90 ≤ 4.096 s ~ 34% (paper)",
+         "measured": ratio(g["short_detected"], g["short_available"]), "result": "order of magnitude"},
+        {"criterion (docs/VALIDATION.md)": "Number of events ~ 100 (paper, to 2019-07-09)",
+         "measured": str(s["events"]["total"]), "result": "informative: depends on the network"},
     ]
     return pd.DataFrame(out)
 
 
 def section_crupi(f: dict) -> List[str]:
     s, v = f["summary"], f["run"] / "validation"
-    lines = ["## 4. Confronto con Crupi et al. (2023)", ""]
+    lines = ["## 4. Comparison with Crupi et al. (2023)", ""]
     if not s:
-        return lines + ["_Validazione (step 8) non eseguita._", ""]
+        return lines + [NOT_RUN, ""]
     if not s["crupi"]:
-        return lines + [f"_Non applicabile: le tabelle di Crupi coprono solo {CRUPI_REFERENCE_PERIOD[0]} → {CRUPI_REFERENCE_PERIOD[1]}._", ""]
+        return lines + [f"_Not applicable: Crupi's tables cover only {CRUPI_REFERENCE_PERIOD[0]} → {CRUPI_REFERENCE_PERIOD[1]}._", ""]
     c = s["crupi"]
     tiers = lambda d: ", ".join(f"{t} {d['by_tier'][t][0]}/{d['by_tier'][t][1]}" for t in "RSP")  # noqa: E731
     unm_cols = ["id", "trigger_time_utc", "detectors", "catalog_name", "S_r1", "CE", "has_data", "focus_r1_max_pm60s",
                 "nearest_event_dt_s", "diagnosis"]
     known, unknown = pd.read_csv(v / "matches_crupi_known.csv"), pd.read_csv(v / "matches_crupi_unknown.csv")
-    lines += [
+    return lines + [
         md_table(acceptance_rows(s)),
         "",
-        f"- Noti (Tabella 11; in finestra {c['known']['in_window']} di {c['known']['total']}): ritrovati "
-        f"**{ratio(c['known']['matched'], c['known']['in_window'])}**; per tier: {tiers(c['known'])}.",
-        f"- Inediti (Tabella 10; in finestra {c['unknown']['in_window']} di {c['unknown']['total']}): ritrovati "
-        f"**{ratio(c['unknown']['matched'], c['unknown']['in_window'])}**; per tier: {tiers(c['unknown'])}.",
+        f"- Known events (Table 11; {c['known']['in_window']} of {c['known']['total']} in the period): found "
+        f"**{ratio(c['known']['matched'], c['known']['in_window'])}**; by tier: {tiers(c['known'])}.",
+        f"- Unknown events (Table 10; {c['unknown']['in_window']} of {c['unknown']['total']} in the period): found "
+        f"**{ratio(c['unknown']['matched'], c['unknown']['in_window'])}**; by tier: {tiers(c['unknown'])}.",
         "",
-        "Noti non ritrovati:",
+        "Known events not found:",
         "",
         md_table(known.loc[~known["matched"], unm_cols]),
         "",
-        "Inediti non ritrovati:",
+        "Unknown events not found:",
         "",
         md_table(unknown.loc[~unknown["matched"], unm_cols]),
         "",
-        "Significatività, nostro S rispetto a quello di Crupi (eventi abbinati con S di riferimento numerico):",
+        "Significance, our S against Crupi's (matched events with a numeric reference S):",
         "",
         md_table(pd.read_csv(v / "significance_vs_crupi.csv")),
         "",
     ]
-    sec1 = read_csv(v / "section1_cases.csv")
-    if sec1 is not None and not sec1.empty:
-        lines += ["Casi del §1 di docs/WORKING_RULES.md (i due \"sub-threshold GRB\" del vecchio log):", "", md_table(sec1), ""]
-    return lines
 
 
 def section_lonely(f: dict) -> List[str]:
     s, v = f["summary"], f["run"] / "validation"
-    lines = ["## 5. Eventi senza controparte e flag di post-processing", ""]
+    lines = ["## 5. Events without counterpart and post-processing flags", ""]
     if not s:
-        return lines + ["_Validazione (step 8) non eseguita._", ""]
+        return lines + [NOT_RUN, ""]
     lonely = pd.read_csv(v / "events_without_counterpart.csv")
     flag_cols = ["saa_edge_short_passage", "saa_region_proximity", "near_zero_prediction"]
-    lonely["flag"] = lonely[flag_cols].apply(lambda r: ", ".join(c for c in flag_cols if r[c]) or "nessuno", axis=1)
-    by_flag = lonely.groupby("flag").size().rename("eventi").reset_index().sort_values("eventi", ascending=False)
+    lonely["flags"] = lonely[flag_cols].apply(lambda r: ", ".join(c for c in flag_cols if r[c]) or "none", axis=1)
+    by_flag = lonely.groupby("flags").size().rename("events").reset_index().sort_values("events", ascending=False)
     p = f["manifest"].get("parameters", {}).get("flags", {})
-    lines += [
-        "Gli eventi senza controparte (né catalogo GBM né tabelle di Crupi) **non sono scoperte**: sono candidati da verificare. "
-        "I flag aggiungono colonne e non cambiano l'elenco degli eventi (definizioni in `models/flags.py` e `docs/ORBIT_ANALYSIS.md`): "
-        f"`saa_edge_short_passage` (inizio entro {p.get('edge_window_s', 200):.0f} s da un passaggio SAA il cui buco non è mascherato), "
-        f"`saa_region_proximity` (Fermi entro {p.get('region_deg', 3.5)}° dalla regione SAA), "
-        f"`near_zero_prediction` (evento ±{p.get('zero_pad_bins', 5)} bin che tocca un bin con fondo previsto ≤ 0).",
+    return lines + [
+        "Events without counterpart (neither the GBM catalog nor Crupi's tables) are **not discoveries**: they are candidates "
+        "to be checked. The flags add columns and never change the event list (definitions in `models/flags.py`): "
+        f"`saa_edge_short_passage` (start within {p.get('edge_window_s', 200):.0f} s of an SAA passage whose data gap is not "
+        f"masked), `saa_region_proximity` (Fermi within {p.get('region_deg', 3.5)}° of the SAA region), "
+        f"`near_zero_prediction` (event ±{p.get('zero_pad_bins', 5)} bins touching a bin with predicted background ≤ 0).",
         "",
         md_table(pd.read_csv(v / "flag_summary.csv")),
         "",
-        f"Eventi senza controparte ({len(lonely)}) per combinazione di flag:",
+        f"Events without counterpart ({len(lonely)}) by combination of flags:",
         "",
         md_table(by_flag),
         "",
-        "Tier: " + ", ".join(f"{t} {int((lonely['CE'] == t).sum())}" for t in "RSP") + "; distanza dal buco SAA più vicino: "
-        + (f"minima {lonely['dist_saa_gap_s'].min():.0f} s, mediana {lonely['dist_saa_gap_s'].median():.0f} s." if len(lonely) else "n/a.")
-        + " Elenco completo: `validation/events_without_counterpart.csv`.",
+        "Tiers: " + ", ".join(f"{t} {int((lonely['CE'] == t).sum())}" for t in "RSP") + "; distance from the nearest SAA gap: "
+        + (f"minimum {lonely['dist_saa_gap_s'].min():.0f} s, median {lonely['dist_saa_gap_s'].median():.0f} s." if len(lonely) else "n/a.")
+        + " Full list: `validation/events_without_counterpart.csv`.",
         "",
     ]
-    return lines
-
-
-def pct_table(df: pd.DataFrame) -> pd.DataFrame:
-    """Percentages as text with one decimal ('—' where undefined)."""
-    return df.apply(lambda col: col.map(lambda v: "—" if pd.isna(v) else f"{v:.1f}%"))
 
 
 def section_classification(f: dict) -> List[str]:
-    s, v = f["summary"], f["run"] / "validation"
-    lines = ["## 6. Classificazione (baseline euristica di Crupi)", ""]
+    lines = ["## 6. Classification (Crupi's heuristic baseline)", ""]
     if f["classified"] is None:
-        return lines + ["_Step 6 non eseguito: `results/events_classified.csv` assente._", ""]
-    cls = f["classified"]
-    pc = cls["predicted_class"].value_counts()
+        return lines + ["_Step 6 not run: `results/events_classified.csv` missing._", ""]
+    pc = f["classified"]["predicted_class"].value_counts()
     lines += [
-        "Regole della \"manual classification logic\" di Crupi (`pipeline/script_classification2.py` upstream): soglie lette da "
-        "decision tree uno-contro-resto e rifinite a mano. Baseline volutamente semplice, da superare con XGBoost (fase 6). "
-        "Mancano la regola FP e le feature `fe_*` (tsfel). Il classificatore non legge le colonne del catalogo "
-        "(`tests/test_classifier.py`). Fuori dai GRB è debole.",
+        "Rules of Crupi's \"manual classification logic\" (upstream `pipeline/script_classification2.py`): thresholds read "
+        "from one-vs-rest decision trees and refined by hand. A deliberately simple baseline, to be outperformed by a learned "
+        "classifier. The FP rule and the light-curve features `fe_*` (tsfel) are missing. The classifier never reads catalog "
+        "columns. It is weak outside GRBs.",
         "",
-        "Classi predette su tutti gli eventi: " + ", ".join(f"{k} {int(n)}" for k, n in pc.items()) + ".",
+        "Predicted classes over all events: " + ", ".join(f"{k} {int(n)}" for k, n in pc.items()) + ".",
         "",
     ]
-    lines += classification_vs_crupi_lines(f)
-    lines += gbm_type_lines(f)
-    return lines
+    return lines + classification_vs_crupi_lines(f) + gbm_type_lines(f)
 
 
 def classification_vs_crupi_lines(f: dict) -> List[str]:
     s, v = f["summary"], f["run"] / "validation"
-    lines = ["### 6.1 Classe predetta contro le classi tentative di Crupi", ""]
+    lines = ["### 6.1 Predicted class against Crupi's tentative classes", ""]
     table = read_csv(v / "classification_vs_crupi.csv")
     if not s or not s["classification"] or table is None or table.empty:
-        return lines + ["_Confronto non disponibile (servono le tabelle di Crupi e lo step 6)._", ""]
+        return lines + ["_Comparison not available (it needs Crupi's tables and step 6)._", ""]
     c = s["classification"]
     cm = confusion_metrics(table)
     cm["per_class"].to_csv(v / "classification_metrics.csv", index=False)
@@ -323,43 +303,44 @@ def classification_vs_crupi_lines(f: dict) -> List[str]:
     for col in ("recall %", "precision %"):
         per_class[col] = per_class[col].map(lambda x: "—" if pd.isna(x) else f"{x:.1f}%")
     return lines + [
-        "Le classi di Crupi sono **tentative** (assegnate a mano nel paper, a volte multiple come `GRB/GF`): misurano la coerenza "
-        "con il suo giudizio, non la natura fisica degli eventi.",
+        "Crupi's classes are **tentative** (assigned by hand in the paper, sometimes multiple such as `GRB/GF`): they measure "
+        "the agreement with his judgement, not the physical nature of the events.",
         "",
-        f"Su {c['matched']} eventi abbinati a Crupi, classe predetta tra quelle tentative (anche multiple): {ratio(c['correct'], c['matched'])}.",
+        f"Of {c['matched']} events matched to Crupi, predicted class among his tentative ones (multiple included): "
+        f"{ratio(c['correct'], c['matched'])}.",
         "",
-        f"Matrice di confusione sugli eventi con classe Crupi univoca: **{cm['n']}** eventi; accuracy complessiva "
-        f"**{cm['correct']}/{cm['n']} ({cm['accuracy']:.1f}%)**. Righe: classe di Crupi; colonne: classe predetta.",
+        f"Confusion matrix on the events with a single Crupi class: **{cm['n']}** events; overall accuracy "
+        f"**{cm['correct']}/{cm['n']} ({cm['accuracy']:.1f}%)**. Rows: Crupi's class; columns: predicted class.",
         "",
-        "Conteggi:",
+        "Counts:",
         "",
         md_table(cm["counts"], index=True),
         "",
-        "Percentuali per riga (quota di ogni classe di Crupi finita in ciascuna classe predetta; la diagonale è la recall):",
+        "Row percentages (share of each Crupi class in each predicted class; the diagonal is the recall):",
         "",
         md_table(pct_table(cm["row_pct"]), index=True),
         "",
-        "Percentuali per colonna (composizione di ogni classe predetta; la diagonale è la precision):",
+        "Column percentages (composition of each predicted class; the diagonal is the precision):",
         "",
         md_table(pct_table(cm["col_pct"]), index=True),
         "",
-        "Per classe (supporto = eventi con quella classe di Crupi):",
+        "Per class (support = events with that Crupi class):",
         "",
         md_table(per_class),
         "",
-        "Per regola, uno-contro-resto (come nello script di Crupi):",
+        "Per rule, one-vs-rest (as in Crupi's script):",
         "",
-        md_table(rules) if rules is not None else "_(nessuna riga)_",
+        md_table(rules) if rules is not None else "_(no rows)_",
         "",
     ]
 
 
 def gbm_type_lines(f: dict) -> List[str]:
     v = f["run"] / "validation"
-    lines = ["### 6.2 Tipo di trigger GBM contro classe predetta", ""]
+    lines = ["### 6.2 GBM trigger type against predicted class", ""]
     matches = read_csv(v / "matches_gbm_catalog.csv")
     if matches is None:
-        return lines + ["_Validazione (step 8) non eseguita._", ""]
+        return lines + [NOT_RUN, ""]
     if f["classified"]["trig_ids"].tolist() != f["events"]["trig_ids"].tolist():
         raise JoinError("results/events_classified.csv and results/events_table.csv list different events")
     check_gbm_join(matches, f["events"], MATCH_MARGIN_S, (FOCUS_T_MAX_BINS + 1) * BIN_LENGTH_S)
@@ -367,125 +348,123 @@ def gbm_type_lines(f: dict) -> List[str]:
     counts.to_csv(v / "gbm_type_vs_class.csv")
     conc.to_csv(v / "gbm_type_concordance.csv", index=False)
     conc_txt = conc.copy()
-    conc_txt["concordanza %"] = conc_txt["concordanza %"].map(lambda x: f"{x:.1f}%")
+    conc_txt["agreement %"] = conc_txt["agreement %"].map(lambda x: f"{x:.1f}%")
     mapping = ", ".join(f"{k}→{c}" for k, c in TYPE_TO_CLASS.items())
     return lines + [
-        f"Trigger del catalogo GBM abbinati a un nostro evento: {total['n']} (verificato che ogni trigger cada nella finestra "
-        f"dell'evento a cui punta, tolleranza {MATCH_MARGIN_S:.3f} s). Il **tipo GBM non è la natura fisica** dell'evento: "
-        "è la classificazione del flight software e dei duty scientist (UNCERT e LOCLPAR sono incerti per definizione).",
+        f"GBM catalog triggers matched to one of our events: {total['n']} (each trigger checked to fall in the window of the "
+        f"event it points to, tolerance {MATCH_MARGIN_S:.3f} s). The **GBM type is not the physical nature** of the event: it "
+        "is the classification of the flight software and of the duty scientists (UNCERT and LOCLPAR are uncertain by definition).",
         "",
-        "Conteggi (righe: tipo GBM; colonne: classe predetta):",
+        "Counts (rows: GBM type; columns: predicted class):",
         "",
         md_table(counts, index=True),
         "",
-        "Percentuali per riga:",
+        "Row percentages:",
         "",
         md_table(pct_table(row_pct), index=True),
         "",
-        f"Concordanza con una mappatura **IPOTETICA** ({mapping}): **{total['agree']}/{total['n']} ({total['pct']:.1f}%)**.",
+        f"Agreement with a **HYPOTHETICAL** mapping ({mapping}): **{total['agree']}/{total['n']} ({total['pct']:.1f}%)**.",
         "",
         md_table(conc_txt),
         "",
     ]
 
 
-def section_lists(f: dict) -> List[str]:
-    v = f["run"] / "validation"
-    lines = ["## 9. Elenchi per nome", ""]
-    matches = read_csv(v / "matches_gbm_catalog.csv")
-    if matches is None or f["events"] is None:
-        return lines + ["_Validazione (step 8) non eseguita._", ""]
-    gbm = gbm_named_list(matches, f["events"], f["classified"])
-    grb, other = gbm[gbm["tipo"] == "GRB"], gbm[gbm["tipo"] != "GRB"]
-    grb.to_csv(v / "list_gbm_grb.csv", index=False)
-    other.to_csv(v / "list_gbm_other.csv", index=False)
-    show = ["trigger_name", "trigger_time", "T90_s", "esito", "evento_trig_ids", "classe_predetta"]
-    tally = lambda d: ", ".join(f"{k} {int(n)}" for k, n in d["esito"].value_counts().items())  # noqa: E731
-    lines += [
-        "Tutti i trigger del catalogo GBM nei giorni con dati del periodo (`validation/list_gbm_grb.csv`, `validation/list_gbm_other.csv`). "
-        "Esito: *rivelato* (abbinato a un nostro evento), *mancato* (dati presenti, nessun evento), *senza dati* (maschera SAA o buco).",
-        "",
-        f"### 9.1 GRB ({len(grb)}: {tally(grb)})",
-        "",
-        md_table(grb[show], ".1f"),
-        "",
-        f"### 9.2 Trigger non-GRB ({len(other)}: {tally(other)})",
-        "",
-        md_table(other[["tipo"] + show], ".1f"),
-        "",
-    ]
-    known, unknown = read_csv(v / "matches_crupi_known.csv"), read_csv(v / "matches_crupi_unknown.csv")
-    if known is None or unknown is None:
-        return lines + ["### 9.3 Eventi di Crupi", "", "_Non applicabile: le tabelle di Crupi non coprono questo periodo._", ""]
-    crupi = crupi_named_list(known, unknown, f["events"], f["classified"])
-    crupi.to_csv(v / "list_crupi_events.csv", index=False)
-    return lines + [
-        f"### 9.3 Eventi di Crupi in finestra ({len(crupi)}: {tally(crupi)}; `validation/list_crupi_events.csv`)",
-        "",
-        md_table(crupi[["insieme", "id", "nome_catalogo", "trigger_time_utc", "CE_Crupi", "esito", "evento_trig_ids",
-                        "classe_predetta", "diagnosi"]]),
-        "",
-    ]
-
-
 def section_localization(f: dict) -> List[str]:
-    lines = ["## 7. Localizzazione", ""]
+    lines = ["## 7. Localization", ""]
     if not f["localized"]:
-        return lines + ["Non eseguita (`results/events_table_loc.csv` assente).", ""]
+        return lines + ["Not run (`results/events_table_loc.csv` missing).", ""]
     loc = pd.read_csv(f["run"] / "results" / "events_table_loc.csv")
     ok = loc["ra"].notna().sum() if "ra" in loc.columns else 0
     return lines + [
-        f"Eseguita: posizione (PSO sulla risposta geometrica dei NaI) per {ok}/{len(loc)} eventi, in `results/events_table_loc.csv`. "
-        "**Non validata** rispetto a posizioni di riferimento: le coordinate servono come feature del classificatore "
-        "(distanza da Sole e Terra), non come risultato.",
+        f"Run: position (PSO on the geometric response of the NaI detectors) for {ok}/{len(loc)} events, in "
+        "`results/events_table_loc.csv`. **Not validated** against reference positions: the coordinates are features of the "
+        "classifier (distance from Sun and Earth), not a result.",
         "",
     ]
 
 
 def section_engine(f: dict) -> List[str]:
     man, meta, s = f["manifest"], f["meta"], f["summary"]
-    lines = ["## 8. Anomalie del motore", ""]
+    lines = ["## 8. Engine anomalies", ""]
     z = man.get("predicted_zero_cells")
     if z:
-        lines.append(f"- Fondo previsto ≤ 0: {z['cells']} celle su {z['bins']} bin × {z['channels']} canali "
-                     f"({z['bins_any_channel']} bin con almeno un canale, {z['bins_all_channels']} con tutti). "
-                     "Da engine v3 quei bin sono esclusi dal calcolo di S; gli eventi vicini hanno il flag `near_zero_prediction`"
+        lines.append(f"- Predicted background ≤ 0: {z['cells']} cells out of {z['bins']} bins × {z['channels']} channels "
+                     f"({z['bins_any_channel']} bins with at least one channel, {z['bins_all_channels']} with all). "
+                     "These bins are excluded from S; neighbouring events carry the flag `near_zero_prediction`"
                      + (f" ({', '.join(str(t) for t in s['flags']['near_zero_events'])})" if s and s["flags"]["near_zero_events"] else "")
                      + ".")
     else:
-        lines.append("- Fondo previsto ≤ 0: conteggio non registrato nel manifest.")
+        lines.append("- Predicted background ≤ 0: count not recorded in the manifest.")
     conv = meta.get("convergence")
     if conv:
-        lines.append(f"- Convergenza: val_loss finale {conv['final_val_loss']:.3f} (migliore {conv['best_val_loss']:.3f}), "
-                     f"rapporto con il predittore costante {conv['final_over_constant_median']:.3f} "
-                     f"(soglia {conv['max_ratio']}): {OK if conv['ok'] else KO}.")
+        lines.append(f"- Convergence: final val_loss {conv['final_val_loss']:.3f} (best {conv['best_val_loss']:.3f}), "
+                     f"ratio to the constant predictor {conv['final_over_constant_median']:.3f} "
+                     f"(threshold {conv['max_ratio']}): {OK if conv['ok'] else KO}.")
     elif meta.get("history"):
         val = meta["history"].get("val_loss", [])
         mt = pd.DataFrame(meta.get("metrics", {})).T
-        lines.append(f"- Convergenza: val_loss finale {val[-1]:.3f}, migliore {min(val):.3f} (epoca {meta.get('best_epoch', '?')}); "
-                     f"MAE test/train mediano sui 36 canali {float((mt['mae_test'] / mt['mae_train']).median()):.3f}. "
-                     "Controllo formale non registrato (bundle precedente all'introduzione del controllo).")
+        lines.append(f"- Convergence: final val_loss {val[-1]:.3f}, best {min(val):.3f} (epoch {meta.get('best_epoch', '?')}); "
+                     f"median test/train MAE over the 36 channels {float((mt['mae_test'] / mt['mae_train']).median()):.3f}. "
+                     "Formal convergence check not recorded in the bundle metadata.")
     else:
-        lines.append("- Convergenza: storia dell'addestramento non registrata (modello legacy).")
+        lines.append("- Convergence: training history not recorded.")
     if s:
-        lines.append(f"- Passaggi SAA brevi non mascherati (buco ≤ 500 s): {s['flags']['short_unmasked_passages']}; "
-                     "la rete tende a sottostimare il fondo nell'avvicinamento (flag `saa_edge_short_passage`).")
-        if s["stability"]:
-            lines.append("- Stabilità rispetto alla rete (stesso periodo): " + "; ".join(
-                f"con `{x['bundle']}` (run `{x['run']}`, {x['events']} eventi): {x['pairs']} coppie, {x['only_here']} solo qui, "
-                f"{x['only_there']} solo là" for x in s["stability"]) + ".")
+        lines.append(f"- Short SAA passages not masked (data gap ≤ 500 s): {s['flags']['short_unmasked_passages']}; "
+                     "the network tends to underestimate the background on the approach (flag `saa_edge_short_passage`).")
     return lines + [""]
 
 
+def section_lists(f: dict) -> List[str]:
+    v = f["run"] / "validation"
+    lines = ["## 9. Lists by name", ""]
+    matches = read_csv(v / "matches_gbm_catalog.csv")
+    if matches is None or f["events"] is None:
+        return lines + [NOT_RUN, ""]
+    gbm = gbm_named_list(matches, f["events"], f["classified"])
+    grb, other = gbm[gbm["type"] == "GRB"], gbm[gbm["type"] != "GRB"]
+    grb.to_csv(v / "list_gbm_grb.csv", index=False)
+    other.to_csv(v / "list_gbm_other.csv", index=False)
+    show = ["trigger_name", "trigger_time", "T90_s", "outcome", "event_trig_ids", "predicted_class"]
+    tally = lambda d: ", ".join(f"{k} {int(n)}" for k, n in d["outcome"].value_counts().items())  # noqa: E731
+    lines += [
+        "Every GBM catalog trigger on the days with data of the period (`validation/list_gbm_grb.csv`, "
+        "`validation/list_gbm_other.csv`). Outcome: *detected* (matched to one of our events), *missed* (data present, no "
+        "event), *no data* (SAA mask or data gap).",
+        "",
+        f"### 9.1 GRBs ({len(grb)}: {tally(grb)})",
+        "",
+        md_table(grb[show], ".1f"),
+        "",
+        f"### 9.2 Non-GRB triggers ({len(other)}: {tally(other)})",
+        "",
+        md_table(other[["type"] + show], ".1f"),
+        "",
+    ]
+    known, unknown = read_csv(v / "matches_crupi_known.csv"), read_csv(v / "matches_crupi_unknown.csv")
+    if known is None or unknown is None:
+        return lines + ["### 9.3 Crupi's events", "", "_Not applicable: Crupi's tables do not cover this period._", ""]
+    crupi = crupi_named_list(known, unknown, f["events"], f["classified"])
+    crupi.to_csv(v / "list_crupi_events.csv", index=False)
+    return lines + [
+        f"### 9.3 Crupi's events in the period ({len(crupi)}: {tally(crupi)}; `validation/list_crupi_events.csv`)",
+        "",
+        md_table(crupi[["set", "id", "catalog_name", "trigger_time_utc", "CE_Crupi", "outcome", "event_trig_ids",
+                        "predicted_class", "diagnosis"]]),
+        "",
+    ]
+
+
+# ----------------------------------------------------------------------------- RESULTS.md
 def results_markdown(run: Path) -> str:
     f = run_facts(run)
     s = f["summary"]
     lines = [
-        f"# Resoconto della run `{f['name']}` ({f['start']} → {f['end']})",
+        f"# Results of the run `{f['name']}` ({f['start']} → {f['end']})",
         "",
-        "Generato da `validation/report.py` (step 9 di `pipeline/pipeline_bkg.py`)"
-        + (f"; validazione del {s['generated']}, commit `{s['validation_git_commit'][:10]}`" if s else "")
-        + ". Tutti i numeri sono letti da file della run; le tabelle complete sono in `validation/` e `results/`.",
+        "Written by `validation/report.py` (step 9 of `pipeline/pipeline_bkg.py`)"
+        + (f"; validation of {s['generated']}, commit `{s['validation_git_commit'][:10]}`" if s else "")
+        + ". Every number is read from the files of the run; the full tables are in `validation/` and `results/`.",
         "",
     ]
     for section in (section_run, section_events, section_gbm, section_crupi, section_lonely, section_classification,
@@ -500,58 +479,12 @@ def write_results(run: Path) -> Path:
     return path
 
 
-# ----------------------------------------------------------------------------- RUNS.md
-def all_runs() -> List[Path]:
-    return sorted(p for p in RUNS_DIR.glob("*/engine-v*") if p.is_dir() and (p / "manifest.json").exists())
-
-
-def runs_index_row(run: Path) -> dict:
-    f = run_facts(run)
-    ev, s = f["events"], f["summary"]
-    row = {
-        "periodo": f"{f['start']} → {f['end']}", "run": f"`{f['name']}`",
-        "rete": f"`{Path(f['bundle']).name if f['bundle'] else '?'}`, seed {seed_text(f)}",
-        "eventi R/S/P": f"{len(ev)} ({'/'.join(str(int((ev['CE'] == c).sum())) for c in 'RSP')})" if ev is not None else "—",
-        "GBM rivelati": f"{s['gbm']['detected']}/{s['gbm']['available']}" if s else "—",
-        "GRB": f"{s['gbm']['grb_detected']}/{s['gbm']['grb_available']}" if s else "—",
-        "Crupi noti": "—", "Crupi inediti": "—",
-        "senza controparte": str(s["events"]["without_counterpart"]) if s else "—",
-        "loc/class": ("✔" if f["localized"] else "—") + "/" + ("✔" if f["classified"] is not None else "—"),
-        "resoconto": f"[RESULTS.md](../{rel(run / RESULTS_FILE)})" if (run / RESULTS_FILE).exists() else "—",
-    }
-    if s and s["crupi"]:
-        c = s["crupi"]
-        row["Crupi noti"] = f"{c['known']['matched']}/{c['known']['in_window']}"
-        row["Crupi inediti"] = f"{c['unknown']['matched']}/{c['unknown']['in_window']}"
-    return row
-
-
-def write_runs_index() -> Path:
-    rows = [runs_index_row(r) for r in all_runs()]
-    lines = [
-        "# Run del motore",
-        "",
-        "Generato da `python -m validation.report --index` (anche allo step 9 della pipeline): una riga per ogni run in `data/runs/` "
-        "con un `manifest.json`. Valori letti dai file della run; \"—\" = step non eseguito o non applicabile.",
-        "",
-        md_table(pd.DataFrame(rows)),
-        "",
-    ]
-    RUNS_INDEX.write_text("\n".join(lines), encoding="utf-8")
-    return RUNS_INDEX
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--run", type=Path, help="run folder data/runs/<start>_<end>/engine-v<N>[-<label>]")
-    parser.add_argument("--index", action="store_true", help="only rewrite docs/RUNS.md")
+    parser.add_argument("--run", type=Path, required=True, help="run folder data/runs/<start>_<end>/engine-v<N>[-<label>]")
     args = parser.parse_args()
     setup_logging()
-    if args.run is None and not args.index:
-        parser.error("give --run or --index")
-    if args.run is not None:
-        detail(f"written {rel(write_results(args.run))}")
-    detail(f"written {rel(write_runs_index())}")
+    detail(f"written {rel(write_results(args.run))}")
 
 
 if __name__ == "__main__":

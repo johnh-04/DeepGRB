@@ -34,17 +34,17 @@ def confusion_metrics(table: pd.DataFrame, truth: str = "crupi_class", pred: str
     labels = sorted(set(single[truth]) | set(single[pred]))
     counts = pd.crosstab(pd.Categorical(single[truth], categories=labels),
                          pd.Categorical(single[pred], categories=labels), dropna=False)
-    counts.index.name, counts.columns.name = "Crupi", "predetta"
+    counts.index.name, counts.columns.name = "Crupi class", "predicted"
     rows = counts.sum(axis=1)
     cols = counts.sum(axis=0)
     row_pct = counts.div(rows.replace(0, np.nan), axis=0) * 100
     col_pct = counts.div(cols.replace(0, np.nan), axis=1) * 100
     diag = pd.Series(np.diag(counts.to_numpy()), index=labels)
     per_class = pd.DataFrame({
-        "classe": labels,
-        "supporto (Crupi)": rows.to_numpy(),
-        "predetti": cols.to_numpy(),
-        "corretti": diag.to_numpy(),
+        "class": labels,
+        "support (Crupi)": rows.to_numpy(),
+        "predicted": cols.to_numpy(),
+        "correct": diag.to_numpy(),
         "recall %": (diag / rows.replace(0, np.nan) * 100).to_numpy(),
         "precision %": (diag / cols.replace(0, np.nan) * 100).to_numpy(),
     })
@@ -93,15 +93,15 @@ def gbm_type_vs_class(matches: pd.DataFrame, classified: pd.DataFrame) -> Tuple[
     m = matches[matches["matched"].astype(bool)].copy()
     m["predicted_class"] = [_class_of(classified, j) for j in m["event"]]
     counts = pd.crosstab(m["trigger_type"], m["predicted_class"])
-    counts.index.name, counts.columns.name = "tipo GBM", "predetta"
+    counts.index.name, counts.columns.name = "GBM type", "predicted"
     row_pct = counts.div(counts.sum(axis=1), axis=0) * 100
     m["expected"] = m["trigger_type"].map(TYPE_TO_CLASS)
     m["agree"] = m["predicted_class"] == m["expected"]
     conc = (m.groupby("trigger_type")
-            .agg(abbinati=("agree", "size"), concordi=("agree", "sum"))
-            .reset_index().rename(columns={"trigger_type": "tipo GBM"}))
-    conc.insert(1, "classe attesa (ipotesi)", conc["tipo GBM"].map(TYPE_TO_CLASS).fillna("—"))
-    conc["concordanza %"] = conc["concordi"] / conc["abbinati"] * 100
+            .agg(matched=("agree", "size"), agreeing=("agree", "sum"))
+            .reset_index().rename(columns={"trigger_type": "GBM type"}))
+    conc.insert(1, "expected class (hypothesis)", conc["GBM type"].map(TYPE_TO_CLASS).fillna("—"))
+    conc["agreement %"] = conc["agreeing"] / conc["matched"] * 100
     total = {"agree": int(m["agree"].sum()), "n": len(m),
              "pct": float(m["agree"].mean() * 100) if len(m) else float("nan")}
     return counts, row_pct, conc, total
@@ -110,31 +110,31 @@ def gbm_type_vs_class(matches: pd.DataFrame, classified: pd.DataFrame) -> Tuple[
 def gbm_named_list(matches: pd.DataFrame, events: pd.DataFrame, classified) -> pd.DataFrame:
     """Every GBM trigger of the period (days with data) by name: outcome, event and predicted class."""
     out = pd.DataFrame({
-        "trigger_name": matches["trigger_name"], "name": matches["name"], "tipo": matches["trigger_type"],
+        "trigger_name": matches["trigger_name"], "name": matches["name"], "type": matches["trigger_type"],
         "trigger_time": matches["trigger_time"],
         "T90_s": matches["T90"] if "T90" in matches.columns else np.nan,
-        "esito": np.where(~matches["has_data"].astype(bool), "senza dati",
-                          np.where(matches["matched"].astype(bool), "rivelato", "mancato")),
+        "outcome": np.where(~matches["has_data"].astype(bool), "no data",
+                            np.where(matches["matched"].astype(bool), "detected", "missed")),
     })
     ev = matches["event"].astype(int)
-    out["evento_trig_ids"] = [int(events.iloc[j]["trig_ids"]) if j >= 0 else "" for j in ev]
-    out["dt_inizio_evento_s"] = np.where(ev >= 0, matches["dt_start_s"], np.nan)
-    out["classe_predetta"] = [_class_of(classified, j) if classified is not None else "" for j in ev]
+    out["event_trig_ids"] = [int(events.iloc[j]["trig_ids"]) if j >= 0 else "" for j in ev]
+    out["dt_event_start_s"] = np.where(ev >= 0, matches["dt_start_s"], np.nan)
+    out["predicted_class"] = [_class_of(classified, j) if classified is not None else "" for j in ev]
     return out.reset_index(drop=True)
 
 
 def crupi_named_list(known: pd.DataFrame, unknown: pd.DataFrame, events: pd.DataFrame, classified) -> pd.DataFrame:
     """Crupi's known and unknown events by id: outcome (found / not found + diagnosis) and predicted class."""
     rows = []
-    for kind, ref in (("noto", known), ("inedito", unknown)):
+    for kind, ref in (("known", known), ("unknown", unknown)):
         for _, r in ref.iterrows():
             j = int(r["event"])
             found = bool(r["matched"])
             rows.append({
-                "insieme": kind, "id": r["id"], "nome_catalogo": r["catalog_name"], "trigger_time_utc": r["trigger_time_utc"],
-                "CE_Crupi": r["CE"], "esito": "ritrovato" if found else "non ritrovato",
-                "diagnosi": "" if found or pd.isna(r.get("diagnosis")) else r.get("diagnosis"),
-                "evento_trig_ids": int(events.iloc[j]["trig_ids"]) if found else "",
-                "classe_predetta": _class_of(classified, j) if found and classified is not None else "",
+                "set": kind, "id": r["id"], "catalog_name": r["catalog_name"], "trigger_time_utc": r["trigger_time_utc"],
+                "CE_Crupi": r["CE"], "outcome": "found" if found else "not found",
+                "diagnosis": "" if found or pd.isna(r.get("diagnosis")) else r.get("diagnosis"),
+                "event_trig_ids": int(events.iloc[j]["trig_ids"]) if found else "",
+                "predicted_class": _class_of(classified, j) if found and classified is not None else "",
             })
     return pd.DataFrame(rows)

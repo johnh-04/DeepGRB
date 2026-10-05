@@ -23,7 +23,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from validation.matching import BINLENGTH, PRIMARY_MARGIN, match_one_to_one, overlap_one_to_one
+from validation.matching import BINLENGTH, PRIMARY_MARGIN, match_one_to_one
 from connections.utils.config import (BASE_DIR, CRUPI_REFERENCE_PERIOD, GBM_BURST_DB, GBM_TRIG_DB, REFERENCE_DIR,
                                       SAA_GAP_S, SAA_GUARD_S, SENSITIVITY_MARGINS_S, TRIGGER_THRESHOLD_SIGMA, run_period)
 from models.flags import FLAG_COLUMNS, event_start_met, unmasked_passages, zero_prediction_rows, PoshistTrack
@@ -33,12 +33,11 @@ from utils.logs import detail, setup_logging
 from utils.period import days_with_data, in_window, window_days
 from utils.run_options import manifest_model, read_manifest
 
-PAPER = {  # Crupi et al. 2023, 2019 period to 2019-07-09 (docs/WORKING_RULES.md §3)
+PAPER = {  # Crupi et al. 2023, 2019 period to 2019-07-09 (docs/VALIDATION.md)
     "grb_burst_catalog": 96, "grb_missing": 15, "grb_detected": 65, "grb_available": 81,
     "long_detected": 60, "long_available": 68, "short_detected": 5, "short_available": 13,
     "events_total": 100,
 }
-SECTION_1_TIMES = ["2019-03-08 22:10:12", "2019-05-25 00:45:54"]  # docs/WORKING_RULES.md §1
 RULE_CLASSES = ["GRB", "SF", "TGF", "UNC(LP)", "GF"]
 VALIDATION_DIR = "validation"
 
@@ -220,26 +219,14 @@ def run_model_bundle(run: Path) -> str:
 
 
 def model_description(bundle: str) -> str:
-    """Seed and origin of a model bundle, from its metadata.json."""
+    """Training seed of a model bundle, from its metadata.json."""
     meta_path = BASE_DIR / bundle / "metadata.json"
     if not meta_path.exists():
-        return "metadati del bundle non trovati"
+        return "bundle metadata not found"
     meta = json.loads(meta_path.read_text())
     if "seed" in meta:
-        return f"seed di training {meta['seed']} (da `metadata.json` del bundle)"
-    if meta.get("source") == "legacy_h5":
-        return "modello legacy addestrato il 2026-09-21 da codice equivalente a upstream: seed non registrato"
-    return "seed non presente nei metadati del bundle"
-
-
-def sibling_runs(run: Path) -> pd.DataFrame:
-    """Runs of the same period with an event table: name, model bundle, number of events."""
-    rows = []
-    for d in sorted(run.parent.iterdir()):
-        ev = d / "results" / "events_table.csv"
-        if d.is_dir() and ev.exists():
-            rows.append({"run": d.name, "bundle": run_model_bundle(d), "events": len(pd.read_csv(ev))})
-    return pd.DataFrame(rows, columns=["run", "bundle", "events"])
+        return f"training seed {meta['seed']} (from the bundle metadata.json)"
+    return "training seed not recorded in the bundle metadata"
 
 
 def git_commit() -> str:
@@ -257,7 +244,7 @@ def classification_tables(rd: RunData, known: pd.DataFrame, unknown: pd.DataFram
         return None
     cls = pd.read_csv(path).set_index("trig_ids")
     rows = []
-    for kind, ref in (("noti", known), ("inediti", unknown)):
+    for kind, ref in (("known", known), ("unknown", unknown)):
         for _, r in ref[ref["matched"]].iterrows():
             tid = rd.events.at[r["event"], "trig_ids"]
             row = {"set": kind, "id": r["id"], "crupi_class": "/".join(sorted(crupi_class(r["catalog_name"]))),
@@ -277,13 +264,13 @@ def classification_tables(rd: RunData, known: pd.DataFrame, unknown: pd.DataFram
         t = truth.apply(lambda s: c in s)
         pr = df[f"rule_{c}"].astype(bool)
         tp, fp, fn = int((t & pr).sum()), int((~t & pr).sum()), int((t & ~pr).sum())
-        ovr.append({"regola": c, "positivi Crupi": int(t.sum()), "flag regola": int(pr.sum()), "TP": tp, "FP": fp, "FN": fn,
+        ovr.append({"rule": c, "Crupi positives": int(t.sum()), "rule flags": int(pr.sum()), "TP": tp, "FP": fp, "FN": fn,
                     "precision": tp / (tp + fp) if tp + fp else np.nan, "recall": tp / (tp + fn) if tp + fn else np.nan})
     single = df[~df["crupi_class"].str.contains("/")]
     labels = sorted(set(single["crupi_class"]) | set(single["predicted_class"]))
     cm = pd.crosstab(pd.Categorical(single["crupi_class"], categories=labels),
                      pd.Categorical(single["predicted_class"], categories=labels), dropna=False)
-    cm.index.name, cm.columns.name = "Crupi", "predetta"
+    cm.index.name, cm.columns.name = "Crupi class", "predicted"
     correct = df.apply(lambda r: r["predicted_class"] in r["crupi_class"].split("/"), axis=1)
     out.update(rules=pd.DataFrame(ovr), confusion=cm, correct=int(correct.sum()), single=len(single))
     return out
@@ -298,24 +285,8 @@ def significance_vs_crupi(known: pd.DataFrame, unknown: pd.DataFrame) -> pd.Data
         sel = (ref_s != ">10") & (ref_s.astype(str) != "0") & (ref_s != "0.0")
         sel &= both[f"our_S_{rng}"] > 0
         ratio = both.loc[sel, f"our_S_{rng}"] / ref_s[sel].astype(float)
-        rows.append({"banda": rng, "eventi": int(sel.sum()), "mediana S_nostro/S_Crupi": ratio.median() if len(ratio) else np.nan,
-                     "16° pct": ratio.quantile(0.16) if len(ratio) else np.nan, "84° pct": ratio.quantile(0.84) if len(ratio) else np.nan})
-    return pd.DataFrame(rows)
-
-
-def section1_cases(ev: pd.DataFrame, cat_m: pd.DataFrame, known_all: pd.DataFrame, unknown_all: pd.DataFrame) -> pd.DataFrame:
-    rows = []
-    for t_utc in SECTION_1_TIMES:
-        t = utc_to_met([t_utc])[0]
-        near = ev[(ev["t_start"] - 60 <= t) & (t <= ev["t_end"] + 60)]
-        cat_near = cat_m[np.abs(cat_m["trig_met"] - t) <= 300]
-        for _, c in cat_near.iterrows():
-            rows.append({"tempo (§1)": t_utc, "trigger GBM": c["name"], "trigger_time": c["trigger_time"],
-                         "rivelato (regola primaria)": bool(c["matched"]),
-                         "evento": int(ev.at[c["event"], "trig_ids"]) if c["matched"] else "",
-                         "inizio evento - trigger [s]": -c["dt_start_s"] if c["matched"] else np.nan,
-                         "eventi nostri entro ±60 s": len(near),
-                         "in tabelle Crupi": bool((np.abs(known_all["t"] - t) <= 600).any() or (np.abs(unknown_all["t"] - t) <= 600).any())})
+        rows.append({"range": rng, "events": int(sel.sum()), "median S_ours/S_Crupi": ratio.median() if len(ratio) else np.nan,
+                     "16th pct": ratio.quantile(0.16) if len(ratio) else np.nan, "84th pct": ratio.quantile(0.84) if len(ratio) else np.nan})
     return pd.DataFrame(rows)
 
 
@@ -379,10 +350,10 @@ def validate_run(run: Path, poshist_dir: Path) -> Dict:
         "match_crupi_known", "match_crupi_unknown"] + flag_cols].to_csv(out / "events_counterparts.csv", index=False)
 
     flag_rows = []
-    groups = (("abbinati Crupi/GBM", ev[ev["counterpart"]]), ("senza controparte", ev[~ev["counterpart"]]), ("tutti", ev))
+    groups = (("matched to Crupi/GBM", ev[ev["counterpart"]]), ("without counterpart", ev[~ev["counterpart"]]), ("all", ev))
     for label, sub in groups:
-        flag_rows.append({"eventi": label, "n": len(sub), **{c: int(sub[c].sum()) for c in FLAG_COLUMNS},
-                          "almeno uno": int(sub[FLAG_COLUMNS].any(axis=1).sum())})
+        flag_rows.append({"events": label, "n": len(sub), **{c: int(sub[c].sum()) for c in FLAG_COLUMNS},
+                          "at least one": int(sub[FLAG_COLUMNS].any(axis=1).sum())})
     pd.DataFrame(flag_rows).to_csv(out / "flag_summary.csv", index=False)
 
     lonely = ev[~ev["counterpart"]].copy()
@@ -407,11 +378,11 @@ def validate_run(run: Path, poshist_dir: Path) -> Dict:
     sens = []
     for label, margin in SENSITIVITY_MARGINS_S.items():
         _, cs = validate_catalog(rd, cat, grb, margin)
-        row = {"margine": label, "GBM rivelati/disponibili": f"{cs['stats']['detected']}/{cs['stats']['available']}",
+        row = {"margin": label, "GBM detected/available": f"{cs['stats']['detected']}/{cs['stats']['available']}",
                "GRB": f"{cs['stats']['grb_detected']}/{cs['stats']['grb_available']}"}
         if with_crupi:
-            row["Crupi noti"] = recall_line(validate_reference(rd, known_all, margin))
-            row["Crupi inediti"] = recall_line(validate_reference(rd, unknown_all, margin))
+            row["Crupi known"] = recall_line(validate_reference(rd, known_all, margin))
+            row["Crupi unknown"] = recall_line(validate_reference(rd, unknown_all, margin))
         sens.append(row)
     pd.DataFrame(sens).to_csv(out / "sensitivity.csv", index=False)
 
@@ -434,7 +405,6 @@ def validate_run(run: Path, poshist_dir: Path) -> Dict:
                   "short_unmasked_passages": None},
         "crupi": None,
         "classification": None,
-        "stability": [],
     }
 
     # SAA passages not covered by the mask
@@ -455,7 +425,6 @@ def validate_run(run: Path, poshist_dir: Path) -> Dict:
             "paper": PAPER,
         }
         significance_vs_crupi(known, unknown).to_csv(out / "significance_vs_crupi.csv", index=False)
-        section1_cases(ev, cat_m, known_all, unknown_all).to_csv(out / "section1_cases.csv", index=False)
         cl = classification_tables(rd, known, unknown)
         if cl is not None:
             cl["table"].to_csv(out / "classification_vs_crupi.csv", index=False)
@@ -463,19 +432,9 @@ def validate_run(run: Path, poshist_dir: Path) -> Dict:
             cl["confusion"].to_csv(out / "classification_confusion.csv")
             summary["classification"] = {"matched": cl["n"], "correct": cl["correct"], "single_label": cl["single"]}
 
-    # stability: same period, other networks
-    siblings = sibling_runs(run)
     this_bundle = run_model_bundle(run)
     summary["model_bundle"] = this_bundle
     summary["model_description"] = model_description(this_bundle)
-    summary["events_per_network"] = {Path(b).name: sorted(set(int(v) for v in g["events"]))
-                                     for b, g in siblings.groupby("bundle")}
-    for bundle, grp in siblings[siblings["bundle"] != this_bundle].groupby("bundle"):
-        other = grp.iloc[0]["run"]
-        oe = pd.read_csv(run.parent / other / "results" / "events_table.csv")
-        pairs = overlap_one_to_one(rd.events["start_met"], rd.events["duration"], oe["start_met"], oe["duration"])
-        summary["stability"].append({"bundle": Path(bundle).name, "run": other, "events": len(oe), "pairs": len(pairs),
-                                     "only_here": len(rd.events) - len(pairs), "only_there": len(oe) - len(pairs)})
 
     (out / "summary.json").write_text(json.dumps(summary, indent=2, default=lambda o: o.item() if hasattr(o, "item") else str(o)))
     return summary

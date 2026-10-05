@@ -9,7 +9,7 @@ DeepGRB pipeline (Crupi et al. 2023), the single entry point.
   6. localization (PSO, slow) + Crupi's heuristic classification -> results/events_table_loc.csv, events_classified.csv
   7. post-processing flags -> results/events_flags.csv
   8. validation against the GBM catalog (always) and Crupi's tables (2019 only) -> <run>/validation/
-  9. report -> <run>/RESULTS.md and docs/RUNS.md
+  9. report -> <run>/RESULTS.md
 
 The run folder is data/runs/<START_DATE>_<END_DATE>/engine-v<ENGINE_VERSION>[-<RUN_LABEL>].
 At start a status table shows every step; a step whose outputs exist is skipped, so a run
@@ -337,8 +337,8 @@ class Pipeline:
                   else "; Crupi's tables do not cover this period"))
 
     def step_report(self) -> None:
-        from validation.report import write_results, write_runs_index
-        detail(f"written {rel(write_results(self.run))} and {rel(write_runs_index())}")
+        from validation.report import write_results
+        detail(f"written {rel(write_results(self.run))}")
 
     # ------------------------------------------------------------------ run
     def steps(self) -> List[Callable]:

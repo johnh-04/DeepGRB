@@ -18,7 +18,6 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = BASE_DIR / "data"
 RUNS_DIR = DATA_DIR / "runs"
 LOGS_DIR = BASE_DIR / "logs"
-DOCS_DIR = BASE_DIR / "docs"
 REFERENCE_DIR = BASE_DIR / "validation" / "reference"
 
 # subfolders of data/ shared by all periods

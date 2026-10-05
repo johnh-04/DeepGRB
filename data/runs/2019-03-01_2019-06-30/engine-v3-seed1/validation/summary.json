@@ -1,6 +1,6 @@
 {
-  "generated": "2026-10-04 16:57 UTC",
-  "validation_git_commit": "21e4db17030c95ee08f7761b1abdcba01cae62c9",
+  "generated": "2026-10-05 19:51 UTC",
+  "validation_git_commit": "5a3f68b4608d4a3be4e39672f27663f086bb4be4",
   "versions": {
     "python": "3.9.23",
     "pandas": "1.5.3",
@@ -114,24 +114,6 @@
     "correct": 79,
     "single_label": 87
   },
-  "stability": [
-    {
-      "bundle": "model_03-2019_07-2019_4.4_2026-09-21",
-      "run": "engine-v2",
-      "events": 144,
-      "pairs": 126,
-      "only_here": 10,
-      "only_there": 18
-    }
-  ],
   "model_bundle": "data/nn_model/bundles/model_2019-03-01_2019-06-30_seed1",
-  "model_description": "seed di training 1 (da `metadata.json` del bundle)",
-  "events_per_network": {
-    "model_03-2019_07-2019_4.4_2026-09-21": [
-      144
-    ],
-    "model_2019-03-01_2019-06-30_seed1": [
-      136
-    ]
-  }
+  "model_description": "training seed 1 (from the bundle metadata.json)"
 }
