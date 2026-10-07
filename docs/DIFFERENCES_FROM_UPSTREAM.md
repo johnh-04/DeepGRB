@@ -41,10 +41,10 @@ Reference values of the official run:
 | Equivalent | 28 |
 | Intentional deviation | 25 |
 | Bug fix | 8 |
-| Inherited limitation | 10 |
-| **total** | **71** |
+| Inherited limitation | 11 |
+| **total** | **72** |
 
-Twelve items have an undetermined effect (see the last section).
+Thirteen items have an undetermined effect (see the last section).
 
 ## Pipeline entry point (`pipeline/pipeline_bkg.py`)
 
@@ -137,7 +137,7 @@ Twelve items have an undetermined effect (see the last section).
 | `earth_vis` | NaN reaches the rules | NaN filled with 1 | Intentional deviation | none: 0 NaN |
 | `num_det_rng` | `len + 1` | `len` | Equivalent | none: not used by the rules |
 | catalog columns | read by the labelling scripts | not read by the classifier | Equivalent | none |
-| FP rule, `fe_*` features | FP rule on `fe_bkg` features; `fe_wet` and `fe_skw` terms in GRB and UNC(LP) | no FP rule; `fe_wet` = 2.1 and `fe_skw` = 0.0, so those terms are neutral | Inherited limitation | undetermined: the features are not available |
+| FP rule, `fe_*` features | FP rule on `fe_bkg` features; `fe_wet` and `fe_skw` terms in GRB and UNC(LP) | no FP rule; `fe_wet` = 2.1 and `fe_skw` = 0.0, so those terms are neutral | Inherited limitation | undetermined: the features are not available (where upstream computes them: row "computation of the `fe_*` features" in Additional items) |
 | thresholds | learned on 2010-11, 2014 and 2019 | same | Inherited limitation | none (kept); 2019 is not independent of the thresholds |
 
 ## Validation (`validation/`, `models/flags.py`)
@@ -174,6 +174,18 @@ Validation tables do not cover; they do not repeat those rows.
 | matching tolerance and comparability | `check_against_gbmcatalogs` (`models/analyze.py:570-606`): a catalogue GRB counts as detected when FOCuS triggers inside its catalogue interval | `validation/matching.py:21-58`: one-to-one greedy matching of the reference instant within ±8.192 s (2 × 4.096 s) of the event interval (change point to end), for all reference types; pairs ordered by distance from the interval, then by distance from the event start | Intentional deviation | the detection counts of this repository and of the original method are not directly comparable |
 | run layout of the official run | no run folders | `engine-v3-seed1/pred/` and `engine-v3-seed1/trig/` are real directories, byte-identical copies of those of `engine-v2-seed1`. `engine-v3-seed1/RESULTS.md:10`, `engine-v3-seed1/manifest.json:99` and `docs/BASELINE_2019.md:13` still describe them as symbolic links and are intentionally left unchanged | Equivalent | none: same files (sha256 of every file verified) |
 | day boundaries, repeated and non-monotonic timestamps (`models/model_nn.py:174`) | the daily tables are appended in day order with no sorting and no removal of duplicate times (`models/model_nn.py:86-102`); each day is re-binned on its own 4.096 s grid and cut to the time range of its POSHIST file (`models/preprocess.py:124`, `134`, `161-168`), so the first bin of a day often coincides with the last bin of the previous day | same | Inherited limitation | measured on `pred/frg.csv` of the official run: 103 of 121 midnights have a repeated bin (101 with a time difference of about 4e-5 s, 2 with identical times, 30 Mar and 14 Apr); 2 pairs are out of order (26 Mar: the day starts 2.048 s earlier on a shifted grid, 1 overlapping bin; 12 Apr: 8.192 s earlier, 3 overlapping bins); 16 boundaries have a genuine data gap. The daily files in `data/bkg` have no repeated or non-increasing times. For the 93 repeated pairs with finite values the rates agree within 0.1 % on all 12 detectors at 50-300 keV: the same physical bin is counted twice. FOCuS has no time axis: a repeated bin is one extra observation and an out-of-order bin is processed in file order. None of the 136 events lies within 50 bins of a repeated bin; event 26 (2019-03-25 23:58:59, GBM match) contains the out-of-order bin of 25/26 Mar. A correction (sort and de-duplicate before FOCuS) belongs to a separate variant (branch `phase2-2024`). Effect on FOCuS: undetermined |
+| computation of the `fe_*` features | nothing in `origin/master` (`0d7d82c`) computes the `fe_*` columns. They are computed only on the upstream branch `ric_review_28062023` (commit `5b57325`), in `models/localize_event.py` inside the per-event loop of `localize`, with tsfel 0.1.4, from the residual (observed minus predicted) averaged over the triggered detectors in the window `start_met` - 72 s to `end_met` + 64 s. `fe_wet` is the entropy of the continuous wavelet transform (ricker wavelet, widths 1 to 9): with E_k = Σ \|CWT_k\| and p_k = E_k / Σ E, `fe_wet` = - Σ p_k ln p_k (maximum ln 9 = 2.197; rule threshold 2.054). `fe_skw` is the skewness of the mean residual. `pipeline/script_classification2.py` reads `events_table_loc_wavelet_norm_ext_bkg2.csv`, a file name that no code in master writes, so the original classification cannot be reproduced from master alone | not computed: `fe_wet` defaults to 2.1 and `fe_skw` to 0.0, so the `fe_wet` term of the GRB rule and the `fe_skw` clause of the UNC(LP) rule are always true (rows "FP rule, `fe_*` features" in the Classification table and "missing `fe_*` values" above) | Inherited limitation | measured: without the `fe_wet` term no GRB is recognised (0 of 136 events); the classes the original features would give are undetermined |
+
+Effect of the class priority and of the `fe_wet` term (informational, not counted as a difference). On the 136 events of the official run, computed from the existing `rule_*` columns without re-running any rule:
+
+| ordering | GRB | SF | UNC(LP) | TGF | GF | UNC |
+|---|---|---|---|---|---|---|
+| A (current): GRB > TGF > SF > UNC(LP) > GF > UNC | 101 | 5 | 17 | 7 | 1 | 5 |
+| B: SF > UNC(LP) > GRB, then TGF > GF, otherwise UNC | 76 | 6 | 47 | 1 | 1 | 5 |
+
+In B the position of TGF and GF is a choice; upstream gives them none. 31 events change class between A and B (25 GRB → UNC(LP), 5 TGF → UNC(LP), 1 TGF → SF). Against the tentative classes of the original author on the 87 events with a single class: A 75/87 (86.2 %), GRB recall 97.1 %, GRB precision 90.7 %; B 76/87 (87.4 %), GRB recall 90.0 %, GRB precision 96.9 %. Against the GBM trigger types of the 67 matched events (GRB 59, solar flare 5, local particles 3): A 62/67 (92.5 %), B 63/67 (94.0 %); only the GRB figures rest on enough events. The reference classes of the original author are heuristic, not observed truth.
+
+Scope of the localization: the PSO localization runs on all events of the official run, but its output is not validated against the catalogue RA/Dec in this baseline. The original author reports having tested the localization before the refactoring; that test is not part of this baseline's verification (see the last section).
 
 Classifier differences already listed in the Classification and Localization tables, with the lines of this
 repository: no FP rule (`models/event_classifier.py:128-146`); `max(ra_std, dec_std) > 10` on a standard deviation
@@ -223,3 +235,5 @@ data:
     excesses hidden where the corrected prediction would be higher, and on the training of the network.
 12. Repeated and out-of-order bins at day boundaries: their effect on the FOCuS output (one extra observation per
     repeated bin, file order for the out-of-order bins), in particular for event 26.
+13. Localization: the PSO positions of the official run are not validated against the catalogue RA/Dec in
+    this baseline (scope note; the earlier test reported by the original author is not part of it).
