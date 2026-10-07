@@ -38,13 +38,13 @@ Reference values of the official run:
 
 | category | items |
 |---|---|
-| Equivalent | 27 |
-| Intentional deviation | 22 |
+| Equivalent | 28 |
+| Intentional deviation | 25 |
 | Bug fix | 8 |
-| Inherited limitation | 8 |
-| **total** | **65** |
+| Inherited limitation | 9 |
+| **total** | **70** |
 
-Ten items have an undetermined effect (see the last section).
+Eleven items have an undetermined effect (see the last section).
 
 ## Pipeline entry point (`pipeline/pipeline_bkg.py`)
 
@@ -161,6 +161,29 @@ Ten items have an undetermined effect (see the last section).
 | burst catalog | flux columns computed but not stored | flux columns stored | Intentional deviation | none: only T90 is used |
 | new modules | none | `utils/period.py`, `utils/run_options.py`, `utils/logs.py` | Equivalent | none |
 
+## Additional items
+
+Rows added after the first comparison. The second, third and fourth rows add aspects that the Classification and
+Validation tables do not cover; they do not repeat those rows.
+
+| file / function | upstream | this repository | category | effect |
+|---|---|---|---|---|
+| daily tables, spacecraft longitude (`models/preprocess.py:143-144`, `171`) | `models/preprocess.py:182-183`, `213`: `get_latitude`, `get_longitude`, `get_mcilwain_l` of gbm `PosHist`, which interpolate the 1 s `SC_LAT` / `SC_LON` samples linearly in time. A 4.096 s bin that straddles the 359.97 → 0.03 deg wrap of `SC_LON` gets a meaningless longitude, and L is computed from it | same | Inherited limitation | measured outside the pipeline (results unchanged): 292 of 2 240 144 bins affected, 217 outside the SAA mask; the bin of event 59 gets 158.2 deg instead of 0.03. `lon` and `l` are network inputs: re-predicting these bins with the official bundle and the POSHIST position changes the prediction by more than 5 % on at least one 50-300 keV detector in 214 of the 292 bins; S_r1 of event 59 6.96 → 0.21, of event 49 3.21 → 0.25, event 4 unchanged. The original author states that the longitude feature must be fixed in the dataset (thesis, section 4.7 and Conclusions). The official baseline keeps the inherited behaviour; a correction belongs to a separate variant (branch `phase2-2024`). Effect on the other triggers and on the training: undetermined |
+| class priority and labelling convention | rules evaluated one-vs-rest; the multiclass training labels use the precedence FP > SF > UNC(LP) > GRB (`pipeline/script_classification2.py:222-226`) | `predicted_class` with priority GRB > TGF > SF > UNC(LP) > GF > UNC (`models/event_classifier.py:150`) | Intentional deviation | measured: of the 129 events with the SF, UNC(LP) or GRB rule true, 31 get a different label than with the precedence SF > UNC(LP) > GRB (25 UNC(LP) → GRB, 5 UNC(LP) → TGF, 1 SF → TGF). The one-vs-rest columns `rule_*` are not affected |
+| missing `fe_*` values | `prepare_X` fills missing values with 0 (`pipeline/script_classification2.py:105`), so a missing `fe_wet` makes the GRB term `fe_wet > 2.054` false; `fe_skw` = 0 satisfies `fe_skw <= 0.345` | `fe_wet` and `fe_skw` are never computed; defaults 2.1 and 0.0 (`models/event_classifier.py:113-114`), so the `fe_wet` term of the GRB rule and the `fe_skw` clause of the UNC(LP) rule are always true | Intentional deviation | measured: the GRB rule depends only on HR10 and HR21 and is true for 101 of 136 events; with the upstream fill it would be false for all events. The upstream analysis used computed `fe_*` values, which are not available here |
+| matching tolerance and comparability | `check_against_gbmcatalogs` (`models/analyze.py:570-606`): a catalogue GRB counts as detected when FOCuS triggers inside its catalogue interval | `validation/matching.py:21-58`: one-to-one greedy matching of the reference instant within ±8.192 s (2 × 4.096 s) of the event interval (change point to end), for all reference types; pairs ordered by distance from the interval, then by distance from the event start | Intentional deviation | the detection counts of this repository and of the original method are not directly comparable |
+| run layout of the official run | no run folders | `engine-v3-seed1/pred/` and `engine-v3-seed1/trig/` are real directories, byte-identical copies of those of `engine-v2-seed1`. `engine-v3-seed1/RESULTS.md:10`, `engine-v3-seed1/manifest.json:99` and `docs/BASELINE_2019.md:13` still describe them as symbolic links and are intentionally left unchanged | Equivalent | none: same files (sha256 of every file verified) |
+
+Classifier differences already listed in the Classification and Localization tables, with the lines of this
+repository: no FP rule (`models/event_classifier.py:128-146`); `max(ra_std, dec_std) > 10` on a standard deviation
+instead of 100 on a variance (`models/event_classifier.py:143`); HR denominator guard 1e-4
+(`models/event_classifier.py:77-80`); `earth_vis` NaN set to 1 (`models/event_classifier.py:129`); `num_det_rng`
+counted as `len` instead of `len + 1`, not used by the rules (`models/event_classifier.py:64`).
+
+Definitions, the same in both versions: `diff_sun` is |ΔRA| + |ΔDec|, each difference wrapped
+(`models/event_classifier.py:83-87`; upstream `pipeline/script_classification2.py:131-132`), not an angular distance.
+HR10 and HR21 are ratios of the significances S of two energy ranges, not of counts (`models/event_classifier.py:76-80`).
+
 ## Files
 
 Upstream files that are no longer in the tree (their behaviour, where it matters, is covered by the rows above):
@@ -195,3 +218,5 @@ data:
 8. Exclusion of channels with predicted background ≤ 0 from the localization peak: whether the peak of event 6 moves.
 9. Data-availability rule in the validation: which GRBs change status (the total of 15 matches the paper).
 10. Missing FP rule and `fe_*` features in the classification: the classes upstream would assign.
+11. Longitude wrap defect of the daily tables: effect on the triggers and events other than 4, 49 and 59, on
+    excesses hidden where the corrected prediction would be higher, and on the training of the network.
