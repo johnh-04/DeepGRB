@@ -41,10 +41,10 @@ Reference values of the official run:
 | Equivalent | 28 |
 | Intentional deviation | 25 |
 | Bug fix | 8 |
-| Inherited limitation | 9 |
-| **total** | **70** |
+| Inherited limitation | 10 |
+| **total** | **71** |
 
-Eleven items have an undetermined effect (see the last section).
+Twelve items have an undetermined effect (see the last section).
 
 ## Pipeline entry point (`pipeline/pipeline_bkg.py`)
 
@@ -173,6 +173,7 @@ Validation tables do not cover; they do not repeat those rows.
 | missing `fe_*` values | `prepare_X` fills missing values with 0 (`pipeline/script_classification2.py:105`), so a missing `fe_wet` makes the GRB term `fe_wet > 2.054` false; `fe_skw` = 0 satisfies `fe_skw <= 0.345` | `fe_wet` and `fe_skw` are never computed; defaults 2.1 and 0.0 (`models/event_classifier.py:113-114`), so the `fe_wet` term of the GRB rule and the `fe_skw` clause of the UNC(LP) rule are always true | Intentional deviation | measured: the GRB rule depends only on HR10 and HR21 and is true for 101 of 136 events; with the upstream fill it would be false for all events. The upstream analysis used computed `fe_*` values, which are not available here |
 | matching tolerance and comparability | `check_against_gbmcatalogs` (`models/analyze.py:570-606`): a catalogue GRB counts as detected when FOCuS triggers inside its catalogue interval | `validation/matching.py:21-58`: one-to-one greedy matching of the reference instant within ±8.192 s (2 × 4.096 s) of the event interval (change point to end), for all reference types; pairs ordered by distance from the interval, then by distance from the event start | Intentional deviation | the detection counts of this repository and of the original method are not directly comparable |
 | run layout of the official run | no run folders | `engine-v3-seed1/pred/` and `engine-v3-seed1/trig/` are real directories, byte-identical copies of those of `engine-v2-seed1`. `engine-v3-seed1/RESULTS.md:10`, `engine-v3-seed1/manifest.json:99` and `docs/BASELINE_2019.md:13` still describe them as symbolic links and are intentionally left unchanged | Equivalent | none: same files (sha256 of every file verified) |
+| day boundaries, repeated and non-monotonic timestamps (`models/model_nn.py:174`) | the daily tables are appended in day order with no sorting and no removal of duplicate times (`models/model_nn.py:86-102`); each day is re-binned on its own 4.096 s grid and cut to the time range of its POSHIST file (`models/preprocess.py:124`, `134`, `161-168`), so the first bin of a day often coincides with the last bin of the previous day | same | Inherited limitation | measured on `pred/frg.csv` of the official run: 103 of 121 midnights have a repeated bin (101 with a time difference of about 4e-5 s, 2 with identical times, 30 Mar and 14 Apr); 2 pairs are out of order (26 Mar: the day starts 2.048 s earlier on a shifted grid, 1 overlapping bin; 12 Apr: 8.192 s earlier, 3 overlapping bins); 16 boundaries have a genuine data gap. The daily files in `data/bkg` have no repeated or non-increasing times. For the 93 repeated pairs with finite values the rates agree within 0.1 % on all 12 detectors at 50-300 keV: the same physical bin is counted twice. FOCuS has no time axis: a repeated bin is one extra observation and an out-of-order bin is processed in file order. None of the 136 events lies within 50 bins of a repeated bin; event 26 (2019-03-25 23:58:59, GBM match) contains the out-of-order bin of 25/26 Mar. A correction (sort and de-duplicate before FOCuS) belongs to a separate variant (branch `phase2-2024`). Effect on FOCuS: undetermined |
 
 Classifier differences already listed in the Classification and Localization tables, with the lines of this
 repository: no FP rule (`models/event_classifier.py:128-146`); `max(ra_std, dec_std) > 10` on a standard deviation
@@ -220,3 +221,5 @@ data:
 10. Missing FP rule and `fe_*` features in the classification: the classes upstream would assign.
 11. Longitude wrap defect of the daily tables: effect on the triggers and events other than 4, 49 and 59, on
     excesses hidden where the corrected prediction would be higher, and on the training of the network.
+12. Repeated and out-of-order bins at day boundaries: their effect on the FOCuS output (one extra observation per
+    repeated bin, file order for the out-of-order bins), in particular for event 26.
