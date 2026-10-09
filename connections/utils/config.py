@@ -5,8 +5,11 @@ The analysis period is NOT defined here: it is set in the USER SETTINGS block of
 pipeline/pipeline_bkg.py (or by DEEPGRB_START_DATE / DEEPGRB_END_DATE), and every other
 tool reads it from the manifest.json of the run it works on.
 
-Scientific parameters follow the upstream code that produced Crupi et al. (2023); the three
-places where the code differs from the paper text are documented in docs/DIFFERENCES_FROM_UPSTREAM.md.
+Scientific parameters follow the upstream code that produced Crupi et al. (2023). Where that code
+differs from the paper text, the code is followed: SAA exclusion of +-150 bins (~614 s) instead
+of +-150 s, FOCuS fed with rates (counts/s) instead of counts, and t_max of 50 bins (204.8 s)
+instead of dmax = 120.4 s. These three items are listed as inherited limitations in
+docs/DIFFERENCES_FROM_UPSTREAM.md.
 """
 
 import json
