@@ -62,6 +62,8 @@ A run lives in `data/runs/<start>_<end>/engine-v<N>[-<label>]/`: `<start>_<end>`
 version and `<label>` names the network. The official run is **`data/runs/2019-03-01_2019-06-30/engine-v3-seed1`**: engine v3, network
 trained with seed 1. It holds `manifest.json` (parameters, model, executions), `pred/` and `trig/`
 (steps 3-4, not versioned), `results/` (steps 5-7), `validation/` (step 8) and `RESULTS.md` (step 9).
+`engine-v2-seed1` is also complete; the other 2019 runs keep only `RESULTS.md`, `manifest.json`, `results/` and
+`validation/`.
 
 ## Requirements
 
@@ -96,6 +98,12 @@ DEEPGRB_TRAIN_SEED=1 DEEPGRB_FORCE_TRAIN=1 nohup python -u pipeline/pipeline_bkg
 The log goes to stdout and to `logs/`. An existing run only resumes its missing steps and the outputs of steps 3-7 are
 never overwritten; a run whose recorded parameters or model checksum differ from the current ones stops; training needs
 an explicit seed and a label. How to rerun the baseline from its network is in `docs/BASELINE_2019.md`.
+
+Always run with an explicit label: `RUN_LABEL` in USER SETTINGS (default `seed1`) or a non-empty `DEEPGRB_RUN_LABEL`.
+An empty `DEEPGRB_RUN_LABEL` does not clear the label, because empty variables are ignored. With `RUN_LABEL = None`
+the 2019 output folder is `engine-v3`, which now holds only results. The check that stops an existing run without
+`pred/` and `trig/` applies only to labelled runs, so with a loadable model (for example `DEEPGRB_TRAIN_SEED=1`) the
+pipeline would compute steps 3-4 into that folder, next to results produced by a different network.
 
 ## Reading RESULTS.md
 

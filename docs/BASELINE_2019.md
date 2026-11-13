@@ -10,8 +10,9 @@
   6.3 min of training on /physical_device:GPU:0; versions:
   python 3.9.23, tensorflow 2.20.0, keras 3.10.0, numpy 1.26.4, pandas 1.5.3, sklearn 1.6.1.
 - Bundle checksum recorded in the manifest: `0eae86f65d97b285976955b98d80a8b5df8202fb8ea9df84973958eb7bc9ee08`.
-- Steps 3-4 of this run (`pred/`, `trig/`) are symbolic links to `data/runs/2019-03-01_2019-06-30/engine-v2-seed1`, computed with the same
-  bundle by engine v2, whose steps 3-4 are identical to v3.
+- Steps 3-4 of this run (`pred/`, `trig/`) are complete copies, byte-identical (sha256 of every file) to those of
+  `data/runs/2019-03-01_2019-06-30/engine-v2-seed1`, computed with the same bundle by engine v2, whose steps 3-4 are
+  identical to v3.
   Engine v3 changed only step 5 (bins with predicted background ≤ 0 are excluded from S).
 
 ## Results
