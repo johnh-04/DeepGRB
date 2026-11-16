@@ -18,7 +18,7 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 
-from connections.utils.config import (BASE_DIR, BIN_LENGTH_S, CRUPI_REFERENCE_PERIOD, FOCUS_T_MAX_BINS, MATCH_MARGIN_S,
+from connections.utils.config import (BASE_DIR, CRUPI_REFERENCE_PERIOD, MATCH_MARGIN_S,
                                       run_period)
 from utils.logs import detail, setup_logging
 from utils.run_options import bundle_seed, manifest_model, read_manifest
@@ -343,7 +343,7 @@ def gbm_type_lines(f: dict) -> List[str]:
         return lines + [NOT_RUN, ""]
     if f["classified"]["trig_ids"].tolist() != f["events"]["trig_ids"].tolist():
         raise JoinError("results/events_classified.csv and results/events_table.csv list different events")
-    check_gbm_join(matches, f["events"], MATCH_MARGIN_S, (FOCUS_T_MAX_BINS + 1) * BIN_LENGTH_S)
+    check_gbm_join(matches, f["events"], MATCH_MARGIN_S)
     counts, row_pct, conc, total = gbm_type_vs_class(matches, f["classified"])
     counts.to_csv(v / "gbm_type_vs_class.csv")
     conc.to_csv(v / "gbm_type_concordance.csv", index=False)

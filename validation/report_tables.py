@@ -53,12 +53,13 @@ def confusion_metrics(table: pd.DataFrame, truth: str = "crupi_class", pred: str
             "accuracy": float(diag.sum() / n * 100) if n else float("nan"), "correct": int(diag.sum()), "n": n}
 
 
-def check_gbm_join(matches: pd.DataFrame, events: pd.DataFrame, margin_s: float, max_offset_s: float) -> None:
+def check_gbm_join(matches: pd.DataFrame, events: pd.DataFrame, margin_s: float) -> None:
     """
     Every matched trigger must fall in the window of the event its 'event' index points to:
-    event start (FOCuS change point) = trig_met - dt_start_s, between start_met - max_offset_s (the
-    change point precedes the first triggered bin by at most t_max; the caller adds one bin for the irregular
-    MET spacing) and start_met, and
+    event start (FOCuS change point) = trig_met - dt_start_s must be the change point of that event,
+    start_met - (start_times - start_times_offset) (the FOCuS offset is a number of rows: its length in
+    seconds depends on the MET grid, with missing bins and gaps shorter than the SAA threshold, so it is
+    read from the event and not bounded by t_max * bin length), not after start_met, and
     start - margin <= trig_met <= end_met + margin.
     """
     m = matches[matches["matched"].astype(bool)]
@@ -71,9 +72,11 @@ def check_gbm_join(matches: pd.DataFrame, events: pd.DataFrame, margin_s: float,
         t, dt = float(r["trig_met"]), float(r["dt_start_s"])
         t_start = t - dt
         ev = events.iloc[j]
+        change_point = float(ev["start_met"]) - (pd.Timestamp(ev["start_times"])
+                                                 - pd.Timestamp(ev["start_times_offset"])).total_seconds()
         if dt < -margin_s - JOIN_EPS_S or t > float(ev["end_met"]) + margin_s + JOIN_EPS_S \
                 or t_start > float(ev["start_met"]) + JOIN_EPS_S \
-                or t_start < float(ev["start_met"]) - max_offset_s - JOIN_EPS_S:
+                or abs(t_start - change_point) > JOIN_EPS_S:
             bad.append(f"{r.get('name', '?')}: trigger {t:.3f} not in event {j} "
                        f"(start {t_start:.3f}, start_met {float(ev['start_met']):.3f}, end_met {float(ev['end_met']):.3f})")
     if bad:
